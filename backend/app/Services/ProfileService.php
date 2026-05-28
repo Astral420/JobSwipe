@@ -70,6 +70,7 @@ class ProfileService
             'bio',
             'location',
             'location_city',
+            'location_country',
             'location_region',
         ]));
 
@@ -189,6 +190,14 @@ class ProfileService
     {
         $profile = $this->ensureApplicantDocument($userId);
         $updated = $this->applicantDocs->update($profile, ['cover_letter_url' => $coverLetterUrl]);
+
+        return $this->withApplicantCompletion($updated);
+    }
+
+    public function updateApplicantPortfolio(string $userId, string $portfolioUrl): array
+    {
+        $profile = $this->ensureApplicantDocument($userId);
+        $updated = $this->applicantDocs->update($profile, ['portfolio_url' => $portfolioUrl]);
 
         return $this->withApplicantCompletion($updated);
     }

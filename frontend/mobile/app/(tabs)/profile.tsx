@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView, StatusBar, ActivityIndicator, Modal, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import { View, ScrollView, StatusBar, ActivityIndicator, Modal, Text, TextInput, TouchableOpacity, StyleSheet, Dimensions, Linking } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTabBarHeight } from '../../hooks/useTabBarHeight';
 import { useAuthStore } from '../../store/authStore';
 import { useTheme } from '../../theme';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
 import { api } from '../../services/api';
 import { uploadSingleFile } from '../../utils/fileUpload';
@@ -66,6 +67,12 @@ export default function ProfileTab() {
   const [stats, setStats] = useState({ applied: 0, pendingMessages: 0, closedMessages: 0 });
   const [experience, setExperience] = useState<ExperienceItem[]>([]);
   const [education, setEducation] = useState<EducationItem[]>([]);
+  const [resumeUrl, setResumeUrl] = useState<string | null>(null);
+  const [coverLetterUrl, setCoverLetterUrl] = useState<string | null>(null);
+  const [portfolioUrl, setPortfolioUrl] = useState<string | null>(null);
+  const [portfolioInput, setPortfolioInput] = useState('');
+  const [uploadingDocumentType, setUploadingDocumentType] = useState<'resume' | 'cover-letter' | null>(null);
+  const [savingPortfolio, setSavingPortfolio] = useState(false);
 
   // Track changes
   const [avatarChanged, setAvatarChanged] = useState(false);
@@ -144,6 +151,19 @@ export default function ProfileTab() {
         if (Array.isArray(profile.skills.soft_skills)) {
           setSoftSkills(profile.skills.soft_skills);
         }
+      }
+
+      // Load document URLs
+      setResumeUrl(null);
+      setCoverLetterUrl(null);
+      setPortfolioUrl(null);
+      if (profile.resume_url) setResumeUrl(profile.resume_url);
+      if (profile.cover_letter_url) setCoverLetterUrl(profile.cover_letter_url);
+      if (profile.portfolio_url) {
+        setPortfolioUrl(profile.portfolio_url);
+        setPortfolioInput(profile.portfolio_url);
+      } else {
+        setPortfolioInput('');
       }
     } catch (err) {
       console.error('Failed to load profile:', err);
@@ -578,6 +598,92 @@ export default function ProfileTab() {
     }
   };
 
+  const getFileNameFromUrl = (url: string) => {
+    try {
+      const path = new URL(url).pathname;
+      const fileName = path.split('/').pop();
+      return fileName ? decodeURIComponent(fileName) : 'Uploaded file';
+    } catch {
+      return 'Uploaded file';
+    }
+  };
+
+  const handleOpenDocument = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      AlertHelper.error('Error', 'Unable to open this link right now.');
+    }
+  };
+
+  const handleUploadDocument = async (documentType: 'resume' | 'cover-letter') => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
+
+      const file = result.assets[0];
+      const fileName = file.name || `${documentType.replace('-', '_')}_${Date.now()}.pdf`;
+
+      setUploadingDocumentType(documentType);
+      const uploadedUrl = await uploadSingleFile(
+        {
+          uri: file.uri,
+          name: fileName,
+          type: file.mimeType ?? undefined,
+          size: file.size ?? undefined,
+        },
+        'document'
+      );
+
+      if (documentType === 'resume') {
+        await api.patch('/profile/applicant/resume', { resume_url: uploadedUrl });
+        AlertHelper.success('Success', 'Resume updated.');
+      } else {
+        await api.patch('/profile/applicant/cover-letter', { cover_letter_url: uploadedUrl });
+        AlertHelper.success('Success', 'Cover letter updated.');
+      }
+
+      await loadProfile();
+    } catch (err: any) {
+      console.error(`${documentType} upload error:`, err);
+      AlertHelper.error('Error', err?.message || 'Failed to upload document.');
+    } finally {
+      setUploadingDocumentType(null);
+    }
+  };
+
+  const handleSavePortfolio = async () => {
+    const trimmed = portfolioInput.trim();
+    if (!trimmed) {
+      AlertHelper.error('Error', 'Please enter a portfolio URL.');
+      return;
+    }
+
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        AlertHelper.error('Error', 'Portfolio URL must start with http:// or https://');
+        return;
+      }
+
+      setSavingPortfolio(true);
+      await api.patch('/profile/applicant/portfolio', { portfolio_url: trimmed });
+      AlertHelper.success('Success', 'Portfolio updated.');
+      await loadProfile();
+    } catch (err: any) {
+      console.error('Portfolio save error:', err);
+      AlertHelper.error('Error', err?.message || 'Failed to update portfolio.');
+    } finally {
+      setSavingPortfolio(false);
+    }
+  };
+
   // ── Sign Out ──────────────────────────────────────────────────────────────
   const handleSignOut = async () => {
     try {
@@ -854,9 +960,118 @@ export default function ProfileTab() {
         {activeTab === 'documents' && (
           <View style={[styles.section, { marginTop: 20 }]}>
             <Text style={[styles.sectionTitle, { color: T.textHint }]}>DOCUMENTS</Text>
-            <Text style={[styles.emptyText, { color: T.textHint }]}>
-              Documents section coming soon
-            </Text>
+
+            <View style={[styles.documentCard, { backgroundColor: T.surface, borderColor: T.border }]}>
+              <View style={[styles.expIcon, { backgroundColor: T.primary + '18' }]}>
+                <MaterialCommunityIcons name="file-pdf-box" size={18} color={T.primary} />
+              </View>
+              <View style={styles.documentMain}>
+                <Text style={[styles.expRole, { color: T.textPrimary }]}>Resume</Text>
+                <Text style={[styles.expMeta, { color: T.textHint }]}>
+                  {resumeUrl ? getFileNameFromUrl(resumeUrl) : 'Not uploaded'}
+                </Text>
+              </View>
+              <View style={styles.documentActions}>
+                <TouchableOpacity
+                  style={[styles.docActionBtn, { backgroundColor: T.primary, opacity: uploadingDocumentType === 'resume' ? 0.8 : 1 }]}
+                  onPress={() => handleUploadDocument('resume')}
+                  disabled={uploadingDocumentType !== null}
+                >
+                  {uploadingDocumentType === 'resume' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.docActionBtnText}>{resumeUrl ? 'Replace' : 'Upload'}</Text>
+                  )}
+                </TouchableOpacity>
+                {resumeUrl && (
+                  <TouchableOpacity
+                    style={[styles.docActionBtn, styles.docViewBtn, { borderColor: T.border }]}
+                    onPress={() => handleOpenDocument(resumeUrl)}
+                    disabled={uploadingDocumentType !== null}
+                  >
+                    <Text style={[styles.docViewBtnText, { color: T.textPrimary }]}>View</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            <View style={[styles.documentCard, { backgroundColor: T.surface, borderColor: T.border }]}>
+              <View style={[styles.expIcon, { backgroundColor: '#4ade8018' }]}>
+                <MaterialCommunityIcons name="file-document-outline" size={18} color="#4ade80" />
+              </View>
+              <View style={styles.documentMain}>
+                <Text style={[styles.expRole, { color: T.textPrimary }]}>Cover Letter</Text>
+                <Text style={[styles.expMeta, { color: T.textHint }]}>
+                  {coverLetterUrl ? getFileNameFromUrl(coverLetterUrl) : 'Not uploaded'}
+                </Text>
+              </View>
+              <View style={styles.documentActions}>
+                <TouchableOpacity
+                  style={[styles.docActionBtn, { backgroundColor: T.primary, opacity: uploadingDocumentType === 'cover-letter' ? 0.8 : 1 }]}
+                  onPress={() => handleUploadDocument('cover-letter')}
+                  disabled={uploadingDocumentType !== null}
+                >
+                  {uploadingDocumentType === 'cover-letter' ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.docActionBtnText}>{coverLetterUrl ? 'Replace' : 'Upload'}</Text>
+                  )}
+                </TouchableOpacity>
+                {coverLetterUrl && (
+                  <TouchableOpacity
+                    style={[styles.docActionBtn, styles.docViewBtn, { borderColor: T.border }]}
+                    onPress={() => handleOpenDocument(coverLetterUrl)}
+                    disabled={uploadingDocumentType !== null}
+                  >
+                    <Text style={[styles.docViewBtnText, { color: T.textPrimary }]}>View</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            <View style={[styles.documentCard, { backgroundColor: T.surface, borderColor: T.border, alignItems: 'flex-start' }]}>
+              <View style={[styles.expIcon, { backgroundColor: '#60a5fa18' }]}>
+                <MaterialCommunityIcons name="link-variant" size={18} color="#60a5fa" />
+              </View>
+              <View style={styles.documentMain}>
+                <Text style={[styles.expRole, { color: T.textPrimary }]}>Portfolio URL</Text>
+                <Text style={[styles.expMeta, { color: T.textHint }]}>
+                  {portfolioUrl || 'Not uploaded'}
+                </Text>
+                <TextInput
+                  style={[styles.portfolioInput, { borderColor: T.border, color: T.textPrimary, backgroundColor: T.bg }]}
+                  placeholder="https://behance.net/yourprofile"
+                  placeholderTextColor={T.textHint}
+                  value={portfolioInput}
+                  onChangeText={setPortfolioInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                />
+              </View>
+              <View style={styles.documentActions}>
+                <TouchableOpacity
+                  style={[styles.docActionBtn, { backgroundColor: T.primary, opacity: savingPortfolio ? 0.8 : 1 }]}
+                  onPress={handleSavePortfolio}
+                  disabled={savingPortfolio || uploadingDocumentType !== null}
+                >
+                  {savingPortfolio ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.docActionBtnText}>Save</Text>
+                  )}
+                </TouchableOpacity>
+                {portfolioUrl && (
+                  <TouchableOpacity
+                    style={[styles.docActionBtn, styles.docViewBtn, { borderColor: T.border }]}
+                    onPress={() => handleOpenDocument(portfolioUrl)}
+                    disabled={savingPortfolio || uploadingDocumentType !== null}
+                  >
+                    <Text style={[styles.docViewBtnText, { color: T.textPrimary }]}>View</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
           </View>
         )}
       </ScrollView>
@@ -956,6 +1171,49 @@ const styles = StyleSheet.create({
   },
   expRole: { fontSize: 15, fontWeight: '700', letterSpacing: -0.2 },
   expMeta: { fontSize: 13, marginTop: 3, fontWeight: '500' },
+  documentCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  documentMain: { flex: 1, minWidth: 0 },
+  documentActions: {
+    minWidth: 82,
+    gap: 8,
+    alignItems: 'stretch',
+  },
+  docActionBtn: {
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  docActionBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  docViewBtn: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+  },
+  docViewBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  portfolioInput: {
+    marginTop: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+  },
   separator: { height: 1, marginVertical: 32 },
   skillsContainer: {
     flexDirection: 'row',

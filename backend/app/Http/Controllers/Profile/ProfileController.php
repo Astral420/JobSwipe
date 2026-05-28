@@ -156,6 +156,17 @@ class ProfileController extends Controller
         return $this->successSigned($result, 'Cover letter updated.');
     }
 
+    public function updateApplicantPortfolio(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'portfolio_url' => ['required', 'url', 'max:2000'],
+        ]);
+
+        $result = $this->profiles->updateApplicantPortfolio($request->user()->id, (string) $validated['portfolio_url']);
+
+        return $this->successSigned($result, 'Portfolio updated.');
+    }
+
     public function updateApplicantPhoto(Request $request): JsonResponse
     {
         $validated = $request->validate([

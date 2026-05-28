@@ -20,6 +20,7 @@ class ApplicantProfileDocument extends Model
         'bio',
         'location',
         'location_city',
+        'location_country',
         'location_region',
         'linkedin_url',
         'social_links',
