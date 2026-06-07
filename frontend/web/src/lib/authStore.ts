@@ -38,12 +38,11 @@ export const useAuthStore = create<AuthState>()(
             email,
             password,
           });
-          
+
           // The API interceptor unwraps the Laravel envelope, so response.data is already the inner data
           const { token, user } = response.data;
           
           if (!token || !user) {
-            console.error('Invalid response structure:', response.data);
             throw new Error('Invalid response from server');
           }
           
@@ -61,7 +60,6 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
           });
         } catch (error) {
-          console.error('Login error:', error);
           set({ isLoading: false });
           throw error;
         }

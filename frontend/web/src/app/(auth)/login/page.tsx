@@ -70,7 +70,6 @@ export default function LoginPage() {
 
           <form
             method="post"
-            action="/login"
             onSubmit={handleSubmit(onSubmit)}
             className="space-y-4"
             noValidate
@@ -92,7 +91,12 @@ export default function LoginPage() {
               {...register('password')}
             />
 
-            <Button type="submit" className="w-full" isLoading={isLoading} disabled={isLoading}>
+            <Button
+              type="submit"
+              className="w-full"
+              isLoading={isLoading}
+              disabled={isLoading}
+            >
               {isLoading ? 'Signing in...' : 'Sign in'}
             </Button>
           </form>

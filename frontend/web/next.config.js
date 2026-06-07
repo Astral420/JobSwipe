@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone', // Required for Docker deployment
+  allowedDevOrigins: ['127.0.0.1'],
   
   // Environment variables
   env: {

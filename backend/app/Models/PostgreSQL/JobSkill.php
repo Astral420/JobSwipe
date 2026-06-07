@@ -11,6 +11,8 @@ class JobSkill extends Model
 
     protected $table = 'job_skills';
 
+    public $timestamps = false;
+
     public $incrementing = false;
 
     protected $keyType = 'string';
