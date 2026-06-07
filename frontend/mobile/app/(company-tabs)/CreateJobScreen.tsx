@@ -43,7 +43,7 @@ type SkillEntry = { name: string; type: 'hard' | 'soft' };
 const INTERVIEW_MESSAGE_PLACEHOLDER = 'Type the message the applicant will see after you swipe.';
 
 // ─── Work types ───────────────────────────────────────────────────────────────
-const WORK_TYPES = ['remote', 'onsite', 'hybrid'] as const;
+const WORK_TYPES = ['remote', 'on_site', 'hybrid'] as const;
 type WorkType = typeof WORK_TYPES[number];
 
 // ─── PH Location Data ─────────────────────────────────────────────────────────
@@ -643,12 +643,12 @@ export default function CreateJobScreen() {
                 activeOpacity={0.8}
               >
                 <MaterialCommunityIcons
-                  name={wt === 'remote' ? 'home-outline' : wt === 'onsite' ? 'office-building-outline' : 'sync'}
+                  name={wt === 'remote' ? 'home-outline' : wt === 'on_site' ? 'office-building-outline' : 'sync'}
                   size={14}
                   color={workType === wt ? T.primary : T.textHint}
                 />
                 <Text style={[s.typeChipText, { color: workType === wt ? T.primary : T.textHint }]}>
-                  {wt.charAt(0).toUpperCase() + wt.slice(1)}
+                  {wt === 'on_site' ? 'Onsite' : wt.charAt(0).toUpperCase() + wt.slice(1)}
                 </Text>
               </TouchableOpacity>
             ))}

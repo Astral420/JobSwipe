@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -30,11 +30,18 @@ export default function LoginPage() {
     resolver: zodResolver(loginSchema),
   });
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('email') || params.has('password')) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+
   const onSubmit = async (data: LoginForm) => {
     setError(null);
     try {
       await login(data.email, data.password);
-      router.push('/dashboard');
+      router.replace('/dashboard');
     } catch (err) {
       setError('Invalid email or password. Please try again.');
     }
@@ -61,11 +68,18 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <form
+            method="post"
+            action="/login"
+            onSubmit={handleSubmit(onSubmit)}
+            className="space-y-4"
+            noValidate
+          >
             <Input
               label="Email"
               type="email"
               placeholder="admin@jobswipe.com"
+              autoComplete="email"
               error={errors.email?.message}
               {...register('email')}
             />
@@ -73,6 +87,7 @@ export default function LoginPage() {
               label="Password"
               type="password"
               placeholder="Enter your password"
+              autoComplete="current-password"
               error={errors.password?.message}
               {...register('password')}
             />

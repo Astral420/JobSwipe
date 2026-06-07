@@ -596,7 +596,7 @@ export default function HomeTab() {
           .filter((uri): uri is string => Boolean(uri))
           .map((uri) => ({ uri }));
         const tagList = j.tags ?? [
-          { label: (j.work_type ?? 'Flexible').toString().replace(/^./, (c) => c.toUpperCase()), variant: 'primary' as const },
+          { label: j.work_type === 'on_site' ? 'On-site' : (j.work_type ?? 'Flexible').toString().replace(/^./, (c) => c.toUpperCase()), variant: 'primary' as const },
           { label: 'Full-time', variant: 'success' as const },
           { label: 'Active', variant: 'neutral' as const },
         ];

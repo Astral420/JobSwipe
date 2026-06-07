@@ -11,7 +11,7 @@ const nextConfig = {
 
   // API proxy
   async rewrites() {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+    const apiUrl = process.env.API_URL || 'http://localhost:8000/api/v1';
     return {
       fallback: [
         {
@@ -77,7 +77,7 @@ const nextConfig = {
 
   // Turbopack configuration (empty config to silence the error)
   turbopack: {
-    root: '/Users/apple/Desktop/DevWork/Project/JobSwipe/JobSwipe/frontend/web',
+    root: require('path').resolve(__dirname),
   },
 };
 

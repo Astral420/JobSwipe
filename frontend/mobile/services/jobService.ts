@@ -45,7 +45,7 @@ export const jobService = {
    * Fetch all jobs for the authenticated company
    */
   list: async (): Promise<Job[]> => {
-    const response = await api.get('/company/jobs');
+    const response = (await api.get('/company/jobs')) as any;
     // Handle different response structures
     return response.jobs || response.data || [];
   },
@@ -54,7 +54,7 @@ export const jobService = {
    * Create a new job posting
    */
   create: async (payload: JobPayload): Promise<Job> => {
-    const response = await api.post('/company/jobs', payload);
+    const response = (await api.post('/company/jobs', payload)) as any;
     return response.job || response.data;
   },
 
@@ -62,7 +62,7 @@ export const jobService = {
    * Update an existing job posting
    */
   update: async (id: number, payload: Partial<JobPayload>): Promise<Job> => {
-    const response = await api.put(`/company/jobs/${id}`, payload);
+    const response = (await api.put(`/company/jobs/${id}`, payload)) as any;
     return response.job || response.data;
   },
 
@@ -77,7 +77,7 @@ export const jobService = {
    * Close/pause a job posting
    */
   close: async (id: number): Promise<Job> => {
-    const response = await api.post(`/company/jobs/${id}/close`);
+    const response = (await api.post(`/company/jobs/${id}/close`)) as any;
     return response.job || response.data;
   },
 
@@ -85,7 +85,7 @@ export const jobService = {
    * Restore/reopen a closed job posting
    */
   restore: async (id: number): Promise<Job> => {
-    const response = await api.post(`/company/jobs/${id}/restore`);
+    const response = (await api.post(`/company/jobs/${id}/restore`)) as any;
     return response.job || response.data;
   },
 
@@ -93,7 +93,7 @@ export const jobService = {
    * Get a single job by ID
    */
   get: async (id: number): Promise<Job> => {
-    const response = await api.get(`/company/jobs/${id}`);
+    const response = (await api.get(`/company/jobs/${id}`)) as any;
     return response.job || response.data;
   },
 };
