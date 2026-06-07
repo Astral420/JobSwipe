@@ -19,6 +19,7 @@ class UpdateApplicantBasicInfoRequest extends FormRequest
             'bio' => ['nullable', 'string', 'max:500'],
             'location' => ['required', 'string', 'max:255'],
             'location_city' => ['nullable', 'string', 'max:100'],
+            'location_country' => ['nullable', 'string', 'max:100'],
             'location_region' => ['nullable', 'string', 'max:100'],
         ];
     }

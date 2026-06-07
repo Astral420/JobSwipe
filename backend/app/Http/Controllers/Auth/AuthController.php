@@ -8,13 +8,34 @@ use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Http\Requests\Auth\VerifyEmailRequest;
+use App\Repositories\PostgreSQL\CompanyProfileRepository;
 use App\Services\AuthService;
+use App\Services\CompanyEmailValidator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class AuthController extends Controller
 {
     public function __construct(private AuthService $auth) {}
+
+    public function checkCompanyDomain(
+        Request $request,
+        CompanyEmailValidator $emailValidator,
+        CompanyProfileRepository $companyProfiles
+    ): JsonResponse {
+        $request->validate([
+            'email' => ['required', 'email'],
+        ]);
+
+        $domain = $emailValidator->extractDomain($request->input('email'));
+        $companyProfile = $companyProfiles->findByDomain($domain);
+
+        return $this->success(data: [
+            'company_exists' => $companyProfile !== null,
+            'company_name' => $companyProfile?->company_name,
+            'requires_invite' => $companyProfile !== null,
+        ]);
+    }
 
     public function register(RegisterRequest $request): JsonResponse
     {

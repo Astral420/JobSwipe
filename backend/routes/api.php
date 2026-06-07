@@ -46,6 +46,7 @@ Route::middleware('throttle:api-tiered')->group(function () {
 
     Route::prefix('v1')->group(function () {
         Route::post('auth/register', [AuthController::class, 'register']);
+        Route::post('auth/check-company-domain', [AuthController::class, 'checkCompanyDomain']);
         Route::post('auth/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
         Route::post('auth/verify-email', [AuthController::class, 'verifyEmail'])->middleware('throttle:3,1');
         Route::post('auth/resend-verification', [AuthController::class, 'resendVerification']);
@@ -109,6 +110,7 @@ Route::middleware('throttle:api-tiered')->group(function () {
                     Route::patch('cover-photo', [ProfileController::class, 'updateApplicantCoverPhoto']);
                     Route::patch('photos', [ProfileController::class, 'updateApplicantPhotos']);
                     Route::patch('social-links', [ProfileController::class, 'updateSocialLinks']);
+                    Route::patch('portfolio', [ProfileController::class, 'updateApplicantPortfolio']);
                 });
 
                 Route::middleware('role:hr,company_admin', 'membership.active')->prefix('company')->group(function () {
