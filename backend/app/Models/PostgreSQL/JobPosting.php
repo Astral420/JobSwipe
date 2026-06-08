@@ -43,9 +43,9 @@ class JobPosting extends Model
 
     protected $fillable = [
         'company_id', 'title', 'description', 'salary_min', 'salary_max',
-        'salary_is_hidden', 'work_type', 'location', 'location_city',
-        'location_region', 'lat', 'lng', 'interview_template',
-        'status', 'expires_at', 'published_at',
+        'salary_is_hidden', 'salary_period', 'work_type', 'employment_type',
+        'location', 'location_city', 'location_region', 'lat', 'lng',
+        'interview_template', 'status', 'expires_at', 'published_at',
         'deleted_by', 'deletion_reason',
         'is_flagged', 'flag_reason', 'flagged_at', 'flagged_by',
         'closed_at', 'closed_by',
@@ -99,6 +99,8 @@ class JobPosting extends Model
             'title' => $this->title,
             'description' => $this->description,
             'work_type' => $this->work_type,
+            'employment_type' => $this->employment_type,
+            'salary_period' => $this->salary_period,
             'location_city' => $this->location_city,
             'location_region' => $this->location_region,
             'skills' => $this->skills->pluck('skill_name')->toArray(),

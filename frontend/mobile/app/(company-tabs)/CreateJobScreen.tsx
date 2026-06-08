@@ -46,6 +46,30 @@ const INTERVIEW_MESSAGE_PLACEHOLDER = 'Type the message the applicant will see a
 const WORK_TYPES = ['remote', 'on_site', 'hybrid'] as const;
 type WorkType = typeof WORK_TYPES[number];
 
+// ─── Employment types ─────────────────────────────────────────────────────────
+const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'internship'] as const;
+type EmploymentType = typeof EMPLOYMENT_TYPES[number];
+const EMPLOYMENT_LABELS: Record<EmploymentType, string> = {
+  full_time: 'Full-time',
+  part_time: 'Part-time',
+  contract: 'Contract',
+  internship: 'Internship',
+};
+const EMPLOYMENT_ICONS: Record<EmploymentType, string> = {
+  full_time: 'briefcase-outline',
+  part_time: 'clock-outline',
+  contract: 'file-document-outline',
+  internship: 'school-outline',
+};
+
+// ─── Salary period types ──────────────────────────────────────────────────────
+const SALARY_PERIODS = ['monthly', 'yearly'] as const;
+type SalaryPeriod = typeof SALARY_PERIODS[number];
+const SALARY_PERIOD_LABELS: Record<SalaryPeriod, string> = {
+  monthly: 'Monthly',
+  yearly: 'Yearly',
+};
+
 // ─── PH Location Data ─────────────────────────────────────────────────────────
 const PH_REGIONS: Record<string, Record<string, string[]>> = {
   'NCR': {
@@ -320,7 +344,9 @@ export default function CreateJobScreen() {
   const [salaryMin,         setSalaryMin]         = useState('');
   const [salaryMax,         setSalaryMax]         = useState('');
   const [salaryHidden,      setSalaryHidden]      = useState(false);
+  const [salaryPeriod,      setSalaryPeriod]      = useState<SalaryPeriod>('monthly');
   const [workType,          setWorkType]          = useState<WorkType>('remote');
+  const [employmentType,    setEmploymentType]    = useState<EmploymentType>('full_time');
 
   // Location
   const [selectedRegion,   setSelectedRegion]   = useState('');
@@ -354,7 +380,9 @@ export default function CreateJobScreen() {
         setSalaryMin(job.salary_min ? String(job.salary_min) : '');
         setSalaryMax(job.salary_max ? String(job.salary_max) : '');
         setSalaryHidden(job.salary_is_hidden || false);
+        setSalaryPeriod((job.salary_period as SalaryPeriod) || 'monthly');
         setWorkType((job.work_type as WorkType) || 'remote');
+        setEmploymentType((job.employment_type as EmploymentType) || 'full_time');
         setLocation(job.location || '');
         setLocationCity(job.location_city || '');
         setLocationRegion(job.location_region || '');
@@ -362,7 +390,7 @@ export default function CreateJobScreen() {
         
         // Map skills
         if (job.skills && Array.isArray(job.skills)) {
-          setSkills(job.skills.map(s => ({ name: s.name, type: s.type })));
+          setSkills(job.skills.map((s: any) => ({ name: s.skill_name || s.name, type: s.skill_type || s.type })));
         }
       } catch (err: any) {
         console.error('Failed to load job:', err);
@@ -431,7 +459,9 @@ export default function CreateJobScreen() {
       salary_min:         salaryMin ? Number(salaryMin) : null,
       salary_max:         salaryMax ? Number(salaryMax) : null,
       salary_is_hidden:   salaryHidden,
+      salary_period:      salaryPeriod,
       work_type:          workType,
+      employment_type:    employmentType,
       location:           location.trim(),
       location_city:      locationCity.trim(),
       location_region:    locationRegion.trim(),
@@ -626,6 +656,31 @@ export default function CreateJobScreen() {
             />
           </View>
 
+          <FieldLabel label="Salary Period" />
+          <View style={s.chipRow}>
+            {SALARY_PERIODS.map(sp => (
+              <TouchableOpacity
+                key={sp}
+                style={[
+                  s.typeChip,
+                  { backgroundColor: T.surfaceHigh, borderColor: T.border },
+                  salaryPeriod === sp && { borderColor: T.primary + '73', backgroundColor: T.primary + '18' },
+                ]}
+                onPress={() => setSalaryPeriod(sp)}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons
+                  name={sp === 'monthly' ? 'calendar-month-outline' : 'calendar-outline'}
+                  size={14}
+                  color={salaryPeriod === sp ? T.primary : T.textHint}
+                />
+                <Text style={[s.typeChipText, { color: salaryPeriod === sp ? T.primary : T.textHint }]}>
+                  {SALARY_PERIOD_LABELS[sp]}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
           {/* ── Section: Work Setup ── */}
           <SectionLabel icon="laptop" label="Work Setup" />
 
@@ -653,6 +708,36 @@ export default function CreateJobScreen() {
               </TouchableOpacity>
             ))}
           </View>
+
+          <FieldLabel label="Employment Type" />
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={s.scrollChipRow}
+            style={{ marginBottom: 12 }}
+          >
+            {EMPLOYMENT_TYPES.map(et => (
+              <TouchableOpacity
+                key={et}
+                style={[
+                  s.typeChip,
+                  { backgroundColor: T.surfaceHigh, borderColor: T.border },
+                  employmentType === et && { borderColor: T.primary + '73', backgroundColor: T.primary + '18' },
+                ]}
+                onPress={() => setEmploymentType(et)}
+                activeOpacity={0.8}
+              >
+                <MaterialCommunityIcons
+                  name={EMPLOYMENT_ICONS[et] as any}
+                  size={14}
+                  color={employmentType === et ? T.primary : T.textHint}
+                />
+                <Text style={[s.typeChipText, { color: employmentType === et ? T.primary : T.textHint }]}>
+                  {EMPLOYMENT_LABELS[et]}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
 
           {/* ── Section: Location ── */}
           <SectionLabel icon="map-marker-outline" label="Location" />
@@ -1013,6 +1098,7 @@ const s = StyleSheet.create({
 
   // Work type chips
   chipRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  scrollChipRow: { flexDirection: 'row', gap: 8 },
   typeChip: {
     flexDirection: 'row',
     alignItems: 'center',

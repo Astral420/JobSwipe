@@ -160,6 +160,7 @@ Route::middleware('throttle:api-tiered')->group(function () {
 
                 Route::apiResource('jobs', JobPostingController::class);
                 Route::post('jobs/{id}/close', [JobPostingController::class, 'close']);
+                Route::post('jobs/{id}/reopen', [JobPostingController::class, 'reopen']);
                 Route::post('jobs/{id}/restore', [JobPostingController::class, 'restore']);
 
                 Route::prefix('jobs/{jobId}/applicants')->group(function () {

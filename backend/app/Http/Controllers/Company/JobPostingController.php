@@ -86,7 +86,9 @@ class JobPostingController extends Controller
                     'salary_min' => $request->salary_min,
                     'salary_max' => $request->salary_max,
                     'salary_is_hidden' => $request->salary_is_hidden ?? false,
+                    'salary_period' => $request->salary_period ?? 'monthly',
                     'work_type' => $request->work_type,
+                    'employment_type' => $request->employment_type,
                     'location' => $request->location,
                     'location_city' => $request->location_city,
                     'location_region' => $request->location_region,
@@ -172,12 +174,14 @@ class JobPostingController extends Controller
             'title' => ['sometimes', 'string', 'max:255'],
             'description' => ['sometimes', 'string', 'min:100'],
             'work_type' => ['sometimes', 'in:remote,hybrid,on_site'],
+            'employment_type' => ['sometimes', 'in:full_time,part_time,contract,internship'],
             'location' => ['nullable', 'string', 'max:255'],
             'location_city' => ['nullable', 'string', 'max:100'],
             'location_region' => ['nullable', 'string', 'max:100'],
             'salary_min' => ['nullable', 'numeric', 'min:0'],
             'salary_max' => ['nullable', 'numeric', 'min:0', 'gte:salary_min'],
             'salary_is_hidden' => ['boolean'],
+            'salary_period' => ['sometimes', 'in:monthly,yearly'],
             'interview_template' => ['sometimes', 'string', 'max:1000'],
             'skills' => ['sometimes', 'array', 'min:1', 'max:20'],
             'skills.*.name' => ['required_with:skills', 'string', 'max:100'],
@@ -348,6 +352,47 @@ class JobPostingController extends Controller
         $job->unsearchable();
 
         return $this->success(message: 'Job posting closed');
+    }
+
+    /**
+     * POST /api/v1/company/jobs/{id}/reopen
+     *
+     * Reopen a closed job posting. This sets the status back to active,
+     * refreshes the publication/expiry dates, and re-indexes in Meilisearch.
+     * This is distinct from restore(), which un-deletes soft-deleted records.
+     */
+    public function reopen(Request $request, string $id): JsonResponse
+    {
+        $job = JobPosting::findOrFail($id);
+
+        if (! $this->ownsJob($request, $job)) {
+            return $this->error('UNAUTHORIZED', 'Not authorized to reopen this job posting', 403);
+        }
+
+        if ($job->status !== 'closed') {
+            return $this->error('INVALID_STATUS', 'Only closed job postings can be reopened', 422);
+        }
+
+        // Check listing cap before reopening
+        $company = $job->company;
+        if ($company->active_listings_count >= $company->listing_cap) {
+            return $this->error('LISTING_LIMIT_REACHED', 'Active listing limit reached for your current trust level.', 403);
+        }
+
+        $job->update([
+            'status' => 'active',
+            'published_at' => now(),
+            'expires_at' => now()->addDays(30),
+        ]);
+
+        $company->increment('active_listings_count');
+
+        $job->load('skills');
+
+        // Re-index in Meilisearch so applicants can find it again
+        $job->searchable();
+
+        return $this->success(data: $job, message: 'Job posting reopened');
     }
 
     /**

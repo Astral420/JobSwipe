@@ -232,7 +232,7 @@ class ProfileController extends Controller
             'work_type' => ['nullable', 'array'],
             'work_type.*' => ['string', 'in:remote,hybrid,onsite'],
             'employment_type' => ['nullable', 'array'],
-            'employment_type.*' => ['string', 'in:full-time,part-time,contract,freelance,internship'],
+            'employment_type.*' => ['string', 'in:full-time,part-time,contract,internship'],
             'salary_expectation' => ['nullable', 'array'],
             'salary_expectation.min' => ['nullable', 'integer', 'min:0'],
             'salary_expectation.max' => ['nullable', 'integer', 'min:0'],

@@ -80,6 +80,9 @@ type ApiDeckJob = Partial<DeckJob> & {
   id: number | string;
   title?: string;
   work_type?: string;
+  salary_min?: number | null;
+  salary_max?: number | null;
+  salary_is_hidden?: boolean;
   company?: {
     name?: string;
     company_name?: string;
@@ -597,7 +600,7 @@ export default function HomeTab() {
           .map((uri) => ({ uri }));
         const tagList = j.tags ?? [
           { label: j.work_type === 'on_site' ? 'On-site' : (j.work_type ?? 'Flexible').toString().replace(/^./, (c) => c.toUpperCase()), variant: 'primary' as const },
-          { label: 'Full-time', variant: 'success' as const },
+          { label: ({ full_time: 'Full-time', part_time: 'Part-time', contract: 'Contract', internship: 'Internship' } as Record<string, string>)[j.employment_type ?? 'full_time'] ?? 'Full-time', variant: 'success' as const },
           { label: 'Active', variant: 'neutral' as const },
         ];
         const derivedRequirements = j.requirements
@@ -606,6 +609,17 @@ export default function HomeTab() {
         const matchScore = j.match_percent
           ?? (typeof j.relevance_score === 'number' ? Math.max(1, Math.min(99, Math.round(j.relevance_score * 100))) : 75);
         const distance = j.distance_km ?? 0;
+
+        // Build salary display from backend fields
+        let salaryDisplay = 'Compensation discussed in interview';
+        if (!j.salary_is_hidden && (j.salary_min || j.salary_max)) {
+          const fmtMin = j.salary_min ? `₱${Number(j.salary_min).toLocaleString()}` : null;
+          const fmtMax = j.salary_max ? `₱${Number(j.salary_max).toLocaleString()}` : null;
+          const periodLabel = j.salary_period === 'yearly' ? 'yr' : 'mo';
+          if (fmtMin && fmtMax) salaryDisplay = `${fmtMin} - ${fmtMax} / ${periodLabel}`;
+          else if (fmtMin) salaryDisplay = `${fmtMin}+ / ${periodLabel}`;
+          else if (fmtMax) salaryDisplay = `Up to ${fmtMax} / ${periodLabel}`;
+        }
 
         return {
           ...j,
@@ -616,7 +630,7 @@ export default function HomeTab() {
             abbr: companyAbbr || 'CO',
           },
           role: j.role ?? j.title ?? 'Open Role',
-          salary_range: j.salary_range ?? 'Compensation discussed in interview',
+          salary_range: salaryDisplay,
           location: j.location ?? 'Location not specified',
           tags: tagList,
           match_percent: matchScore,
@@ -626,7 +640,7 @@ export default function HomeTab() {
           company_photos: sourcePhotos,
           reviews: j.reviews ?? [],
           position: j.role ?? j.title ?? 'Open Role',
-          salary: j.salary_range ?? 'Compensation discussed in interview',
+          salary: salaryDisplay,
           description: j.about_role ?? j.description ?? 'No role summary provided yet.',
           lookingFor: derivedRequirements || 'General professional experience',
           distanceKm: distance,
@@ -660,8 +674,10 @@ export default function HomeTab() {
 
   // km ↔ miles display helper
   const formatDistance = (km: number) => {
-    if (useKm) return `${km.toFixed(1)} km away`;
-    return `${(km * 0.621371).toFixed(1)} mi away`;
+    if (km < 0) return 'Distance unavailable';
+    if (km === 0) return 'Same city';
+    if (useKm) return `~${km.toFixed(0)} km away`;
+    return `~${(km * 0.621371).toFixed(0)} mi away`;
   };
 
   // Label shown in the panel header uses the draft value
