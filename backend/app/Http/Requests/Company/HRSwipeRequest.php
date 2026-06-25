@@ -17,7 +17,7 @@ class HRSwipeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'message' => ['required', 'string',
+            'message' => ['nullable', 'string',
                 'min:10', 'max:1000'],
 
         ];

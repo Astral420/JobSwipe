@@ -35,6 +35,7 @@ class JobPostingController extends Controller
 
         $jobs = JobPosting::where('company_id', $company->id)
             ->with('skills')
+            ->withCount(['applications as applicants_count'])
             ->orderBy('created_at', 'desc')
             ->paginate(20);
 

@@ -55,6 +55,7 @@ type Applicant = {
   avatarColor: string;
   rating: number;
   role: string;
+  applyingFor: string;
   experience: string;
   location: string;
   tags: Array<{ label: string; variant: 'primary' | 'success' | 'warning' | 'neutral' }>;
@@ -120,6 +121,54 @@ function SkillChip({ label, variant }: { label: string; variant: 'hard' | 'soft'
   );
 }
 
+const asTextArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item;
+      if (item && typeof item === 'object') {
+        const skill = item as { name?: unknown; skill_name?: unknown; label?: unknown };
+        return skill.name ?? skill.skill_name ?? skill.label ?? '';
+      }
+      return '';
+    })
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+};
+
+const formatExperience = (profile: any): string => {
+  if (profile?.years_of_experience !== undefined && profile?.years_of_experience !== null) {
+    const years = Number(profile.years_of_experience);
+    return Number.isFinite(years) ? `${years} year${years === 1 ? '' : 's'}` : String(profile.years_of_experience);
+  }
+
+  const experience = Array.isArray(profile?.work_experience) ? profile.work_experience : [];
+  if (experience.length > 0) {
+    const latest = experience[0] ?? {};
+    const title = latest.title ?? latest.position ?? latest.role;
+    const company = latest.company ?? latest.company_name;
+
+    if (title && company) return `${title} at ${company}`;
+    if (title) return String(title);
+    return `${experience.length} experience item${experience.length === 1 ? '' : 's'}`;
+  }
+
+  return 'Experience not specified';
+};
+
+const getApplicantPhotos = (profile: any): Array<{ uri: string }> => {
+  const photos = asTextArray(profile?.photos);
+  const urls = [
+    typeof profile?.profile_photo_url === 'string' ? profile.profile_photo_url : '',
+    ...photos,
+  ].filter(Boolean);
+
+  return urls.length > 0
+    ? urls.map((uri) => ({ uri }))
+    : [{ uri: 'https://via.placeholder.com/400x600?text=No+Photo' }];
+};
+
 export default function CompanyHomeTab() {
   const navigation = useNavigation();
   const tabBarHeight      = useTabBarHeight();
@@ -145,6 +194,7 @@ export default function CompanyHomeTab() {
   const [photoIndex, setPhotoIndex] = useState(0);
   const [timerKey, setTimerKey]     = useState(0);
   const [liked, setLiked]           = useState<number[]>([]);
+  const [swipedIds, setSwipedIds]   = useState<number[]>([]);
   const [expanded, setExpanded]     = useState(false);
   const [history, setHistory]       = useState<{ id: number; dir: number }[]>([]);
   const [cardSize, setCardSize]     = useState({ width: SW, height: SH });
@@ -195,36 +245,47 @@ export default function CompanyHomeTab() {
       
       // Transform API response to match UI structure
       const items = response?.data || response?.applicants || [];
+      const selectedJobTitle = jobs.find(job => job.id === jobId)?.title;
       const transformedApplicants: Applicant[] = items.map((item: any) => {
         // Handle both nested and flat structures
         const app = item?.applicant_profile ?? item?.applicant ?? item;
         const profile = app?.profile_data ?? app;
-        
+        const hardSkills = asTextArray(profile?.skills?.hard_skills ?? profile?.hard_skills);
+        const softSkills = asTextArray(profile?.skills?.soft_skills ?? profile?.soft_skills);
+        const role = profile?.job_preferences?.desired_position
+          ?? profile?.desired_position
+          ?? profile?.role
+          ?? selectedJobTitle
+          ?? 'Not specified';
+        const applyingFor = item?.jobPosting?.title
+          ?? item?.job_posting?.title
+          ?? item?.job_title
+          ?? selectedJobTitle
+          ?? 'Not specified';
+        const location = profile?.location
+          || [profile?.location_city, profile?.location_region, profile?.location_country].filter(Boolean).join(', ')
+          || 'Location not specified';
+
         return {
-          id: app.user_id || app.id,
+          id: app.id || app.user_id,
           name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || 'Unknown',
           avatarColor: Colors.primary,
           rating: profile.rating || 0,
-          role: profile.desired_position || profile.role || 'Not specified',
-          experience: profile.years_of_experience 
-            ? `${profile.years_of_experience} years` 
-            : 'Experience not specified',
-          location: profile.location || 'Location not specified',
+          role,
+          applyingFor,
+          experience: formatExperience(profile),
+          location: location || 'Location not specified',
           tags: [
-            ...(profile.hard_skills?.slice(0, 3).map((skill: string) => ({ 
-              label: skill, 
-              variant: 'primary' as const 
+            ...(hardSkills.slice(0, 3).map((skill: string) => ({
+              label: skill,
+              variant: 'primary' as const
             })) || []),
           ],
           bio: profile.bio || 'No bio provided',
-          matchPercent: item.match_score || profile.match_percent || 0,
-          photos: profile.profile_photo_url
-            ? [{ uri: profile.profile_photo_url }]
-            : profile.photos?.length > 0
-              ? profile.photos.map((url: string) => ({ uri: url }))
-              : [{ uri: 'https://via.placeholder.com/400x600?text=No+Photo' }],
-          hardSkills: profile.hard_skills || [],
-          softSkills: profile.soft_skills || [],
+          matchPercent: item.match_score ?? app.skill_match_percentage ?? profile.match_percent ?? 0,
+          photos: getApplicantPhotos(profile),
+          hardSkills,
+          softSkills,
           distanceKm: profile.distance_km ?? 0,
           reviews: profile.reviews || [],
           jobPostingId: jobId, // Store job ID for swipe endpoints
@@ -238,6 +299,7 @@ export default function CompanyHomeTab() {
       indexRef.current = 0;
       setSwipesUsed(0);
       setLiked([]);
+      setSwipedIds([]);
       setHistory([]);
       setPhotoIndex(0);
       position.setValue({ x: 0, y: 0 });
@@ -274,9 +336,8 @@ export default function CompanyHomeTab() {
   };
 
   const advanceDeck = () => {
-    const total = filteredApplicantRef.current.length;
     setIndex(i => {
-      const next = total > 0 ? (i + 1) % total : 0;
+      const next = i + 1;
       indexRef.current = next;
       return next;
     });
@@ -328,7 +389,7 @@ export default function CompanyHomeTab() {
 
   const draftLabel         = draftUseKm ? `${draftDistance} km` : `${(draftDistance * 0.621371).toFixed(0)} mi`;
   const draftFilteredCount = applicants.filter(a => a.distanceKm <= draftDistance).length;
-  const filteredApplicants = applicants.filter(a => a.distanceKm <= maxDistanceKm && !blockedIds.includes(a.id));
+  const filteredApplicants = applicants.filter(a => a.distanceKm <= maxDistanceKm && !blockedIds.includes(a.id) && !swipedIds.includes(a.id));
   const filteredApplicantRef = useRef(filteredApplicants);
   filteredApplicantRef.current = filteredApplicants;
   const remainingSwipes = Math.max(MAX_SWIPES - swipesUsed, 0);
@@ -449,7 +510,10 @@ export default function CompanyHomeTab() {
       cardOpacity.setValue(0);
       position.setValue({ x: 0, y: 0 });
       if (currentApplicant && dir > 0) setLiked(prev => [...prev, currentApplicant.id]);
-      if (currentApplicant) setHistory(prev => [...prev, { id: currentApplicant.id, dir }]);
+      if (currentApplicant) {
+        setHistory(prev => [...prev, { id: currentApplicant.id, dir }]);
+        setSwipedIds(prev => [...prev, currentApplicant.id]);
+      }
       setPhotoIndex(0);
       photoScrollRef.current?.scrollTo({ x: 0, animated: false });
       advanceDeck();
@@ -486,6 +550,7 @@ export default function CompanyHomeTab() {
     setIndex(0);
     indexRef.current = 0;
     setLiked([]);
+    setSwipedIds([]);
     setHistory([]);
     setPhotoIndex(0);
     setSwipesUsed(0);
@@ -692,7 +757,24 @@ export default function CompanyHomeTab() {
   const applicant = filteredApplicants[index];
   const nextApplicant =
     growingApplicantRef.current ??
-    (filteredApplicants.length > 1 ? filteredApplicants[(index + 1) % filteredApplicants.length] : null);
+    (filteredApplicants.length > 1 ? filteredApplicants[index + 1] ?? null : null);
+
+  // ── All reviewed ──────────────────────────────────────────────────────────
+  if (!applicant && !loading) {
+    return (
+      <View style={s.emptyScreen}>
+        <StatusBar barStyle="dark-content" />
+        <View style={s.emptyIconWrap}>
+          <MaterialCommunityIcons name="check-circle-outline" size={40} color={Colors.primary} />
+        </View>
+        <Text style={s.emptyTitle}>All caught up!</Text>
+        <Text style={s.emptySub}>You've reviewed all available applicants for this job. Check back later for new candidates.</Text>
+        <TouchableOpacity style={s.refreshBtn} onPress={() => selectedJobId && fetchApplicants(selectedJobId)}>
+          <Text style={s.refreshBtnText}>Refresh</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   // ── Main render ───────────────────────────────────────────────────────────
   return (
@@ -876,7 +958,7 @@ export default function CompanyHomeTab() {
             <MaterialCommunityIcons name="briefcase-outline" size={14} color="rgba(255,255,255,0.75)" />
             <Text style={s.applyingLabel}>Applying for</Text>
           </View>
-          <Text style={s.roleText}>{applicant.role}</Text>
+          <Text style={s.roleText}>{applicant.applyingFor}</Text>
         </View>
       </Animated.View>
 

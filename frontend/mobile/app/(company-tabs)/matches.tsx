@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTabBarHeight } from '../../hooks/useTabBarHeight';
 import { useTheme } from '../../theme';
 import { api } from '../../services/api';
+import { useAuthStore } from '../../store/authStore';
 
 // TODO: Add tests for company matches screen
 // Test cases should cover:
@@ -70,40 +71,6 @@ const PIPELINE_STAGES: {
 
 // ─── Chat data ────────────────────────────────────────────────────────────────
 type ChatMessage = { id: number; from: 'me' | 'them'; text: string; time: string; };
-
-const SEED_MESSAGES: Record<string, ChatMessage[]> = {
-  '1': [
-    { id: 1, from: 'them', text: "Hi! I'm really excited about this Frontend Developer role.", time: '9:45 AM' },
-    { id: 2, from: 'me',   text: "Thanks for applying, Maria! We loved your portfolio.", time: '10:02 AM' },
-    { id: 3, from: 'them', text: "That means a lot! I've been following your company for a while.", time: '10:08 AM' },
-    { id: 4, from: 'me',   text: "Great. We'd love to schedule a screening call. Are you free this week?", time: '10:15 AM' },
-    { id: 5, from: 'them', text: "Hi! I'm excited about the role. Happy to start anytime!", time: '2m ago' },
-  ],
-  '2': [
-    { id: 1, from: 'them', text: "Hi, I just saw I was moved forward in the process!", time: '8:30 AM' },
-    { id: 2, from: 'me',   text: "Yes! Your technical test results were impressive, Pedro.", time: '9:00 AM' },
-    { id: 3, from: 'them', text: "Thanks for moving me forward! When's the interview?", time: '1h ago' },
-  ],
-  '3': [
-    { id: 1, from: 'me',   text: "Hi Carla, thanks for applying to the Data Analyst role.", time: 'Yesterday' },
-    { id: 2, from: 'them', text: "Thank you! I'm very interested in this opportunity.", time: 'Yesterday' },
-    { id: 3, from: 'me',   text: "We'd like to move forward with a case study. Does that work for you?", time: '3h ago' },
-    { id: 4, from: 'them', text: "Sounds good, I'll prepare for the case study.", time: '3h ago' },
-  ],
-  '4': [
-    { id: 1, from: 'me',   text: "Hi James! We're very impressed with your background.", time: 'Mon' },
-    { id: 2, from: 'them', text: "Thank you so much! I'm really excited about this opportunity.", time: 'Mon' },
-    { id: 3, from: 'me',   text: "Could you share your portfolio and some recent work samples?", time: 'Tue' },
-    { id: 4, from: 'them', text: "I've sent over my portfolio as requested!", time: 'Yesterday' },
-  ],
-};
-
-const AUTO_REPLIES: Record<string, string[]> = {
-  '1': ["Thanks for the update! Looking forward to it.", "We'll send the calendar invite shortly.", "Feel free to reach out if you have any questions."],
-  '2': ["The interview is scheduled for Friday at 2 PM.", "We'll send a calendar invite to your email.", "Let us know if you need to reschedule."],
-  '3': ["We'll be in touch soon with more details.", "Thanks for your patience!", "We appreciate your enthusiasm."],
-  '4': ["We're reviewing your portfolio now.", "We'll be in touch with next steps soon.", "Great work, we're impressed!"],
-};
 
 // ─── Review types ─────────────────────────────────────────────────────────────
 type Review = {
@@ -205,17 +172,37 @@ function ConversationScreen({
   tabBarHeight: number;
 }) {
   const T = useTheme();
+  const authRole = useAuthStore((s) => s.role);
   const { top: topInset } = useSafeAreaInsets();
-  const [messages, setMessages] = useState<ChatMessage[]>(SEED_MESSAGES[applicant.id] ?? []);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
-  const replyIndexRef = useRef(0);
 
-  useEffect(() => { const sub = BackHandler.addEventListener('hardwareBackPress', () => { 
-    onBack(); return true; }); 
-    return () => sub.remove(); }, [onBack]);
+  const fetchMessages = useCallback(async () => {
+    try {
+      const msgs: any = await api.get(`/matches/${applicant.id}/messages`);
+      const payload = Array.isArray(msgs) ? msgs : (Array.isArray(msgs?.data) ? msgs.data : []);
+      const items = payload.map((m: any) => ({
+        id: m.id,
+        from: m.sender?.role === authRole ? 'me' as const : 'them' as const,
+        text: m.body ?? '',
+        time: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+      }));
+      setMessages(items.reverse());
+    } catch (err) {
+      console.error('Failed to fetch messages:', err);
+    }
+  }, [applicant.id, authRole]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [onBack]);
 
   useEffect(() => {
     const SCREEN_H = Dimensions.get('screen').height;
@@ -223,36 +210,39 @@ function ConversationScreen({
       setKeyboardHeight(SCREEN_H - e.endCoordinates.screenY);
     });
     const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
-    return () => { show.remove(); hide.remove(); };
+    return () => {
+      show.remove();
+      hide.remove();
+    };
   }, []);
 
   useEffect(() => {
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 100);
-  }, []);
+    fetchMessages();
+    const interval = setInterval(fetchMessages, 5000);
+    return () => clearInterval(interval);
+  }, [fetchMessages]);
 
   const scrollToBottom = (animated = true) => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated }), 100);
   };
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     const text = draft.trim();
     if (!text) return;
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setMessages(prev => [...prev, { id: Date.now(), from: 'me', text, time: now }]);
+
+    // Client-side optimistic update
+    const tempId = Date.now();
+    setMessages((prev) => [...prev, { id: tempId, from: 'me', text, time: now }]);
     setDraft('');
     scrollToBottom();
 
-    const replies = AUTO_REPLIES[applicant.id] ?? ["Thanks for your message!"];
-    const replyText = replies[replyIndexRef.current % replies.length];
-    replyIndexRef.current += 1;
-    setIsTyping(true);
-    scrollToBottom();
-    setTimeout(() => {
-      setIsTyping(false);
-      const replyTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setMessages(prev => [...prev, { id: Date.now() + 1, from: 'them', text: replyText, time: replyTime }]);
-      scrollToBottom();
-    }, 1400);
+    try {
+      await api.post(`/matches/${applicant.id}/messages`, { body: text });
+      fetchMessages();
+    } catch (err) {
+      console.error('Failed to send message:', err);
+    }
   };
 
   const stage = PIPELINE_STAGES.find(st => st.key === applicant.status);
@@ -424,25 +414,39 @@ export default function CompanyMatchesScreen() {
     try {
       const response: any = await api.get('/company/matches');
       
-      // Transform API response to match UI structure
-      const items = response?.data || response?.matches || [];
+      // The axios interceptor unwraps `response.data` (the API envelope's `data` field),
+      // so `response` here is the Laravel paginator: { data: [...], current_page, ... }
+      const items: any[] = response?.data ?? [];
+      
       const transformedMatches: Match[] = items.map((item: any) => {
-        const applicant = item.applicant_profile || item.applicant || {};
-        const profile = applicant.profile_data || applicant;
+        // `item.applicant` is the PostgreSQL ApplicantProfile.
+        // `item.applicant.profile_data` is the MongoDB profile attached by the backend.
+        const applicant = item.applicant ?? {};
+        const profile = applicant.profile_data ?? {};
         
+        // Map backend statuses (pending/accepted/closed/expired/declined) to UI statuses
+        const rawStatus = item.status ?? 'pending';
+        let uiStatus: Status;
+        if (rawStatus === 'pending') uiStatus = 'new';
+        else if (rawStatus === 'accepted') uiStatus = 'screening';
+        else if (rawStatus === 'closed' || rawStatus === 'expired' || rawStatus === 'declined') uiStatus = 'closed';
+        else uiStatus = 'new';
+
+        const jobTitle = item.job_posting?.title ?? item.job_title ?? 'Not specified';
+
         return {
           id: String(item.id),
-          name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || 'Unknown',
-          role: profile.desired_position || item.job_title || 'Not specified',
-          avatar: profile.profile_photo_url || 'https://via.placeholder.com/100',
-          status: (item.status || 'new') as Status,
-          lastMsg: item.last_message?.body || '',
+          name: `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Unknown',
+          role: profile.job_preferences?.desired_position ?? profile.desired_position ?? jobTitle,
+          avatar: profile.profile_photo_url ?? '',
+          status: uiStatus,
+          lastMsg: item.last_message?.body ?? '',
           time: item.last_message?.created_at ? formatTime(item.last_message.created_at) : '',
-          unread: item.unread_count || 0,
-          expired: item.status === 'closed' || item.is_expired,
-          applicantId: item.applicant_id || applicant.user_id,
+          unread: item.unread_count ?? 0,
+          expired: rawStatus === 'closed' || rawStatus === 'expired' || rawStatus === 'declined',
+          applicantId: item.applicant_id ?? applicant.user_id,
           jobId: item.job_posting_id,
-          jobTitle: item.job_title,
+          jobTitle,
         };
       });
       
