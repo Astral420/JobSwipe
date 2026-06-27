@@ -176,7 +176,6 @@ export default function CompanyHomeTab() {
 
   const actionsBottom = tabBarHeight + 20;
   const overlayBottom = actionsBottom + ACTIONS_HEIGHT + 8;
-  const MAX_SWIPES = 15;
 
   // ── API state ──────────────────────────────────────────────────────────────
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -188,7 +187,6 @@ export default function CompanyHomeTab() {
   const [error, setError]           = useState<string | null>(null);
 
   const [index, setIndex]           = useState(0);
-  const [swipesUsed, setSwipesUsed] = useState(0);
   const indexRef = useRef(0);
   const growingApplicantRef = useRef<(typeof filteredApplicants)[number] | null>(null);
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -297,7 +295,6 @@ export default function CompanyHomeTab() {
       // Reset swipe state when loading new applicants
       setIndex(0);
       indexRef.current = 0;
-      setSwipesUsed(0);
       setLiked([]);
       setSwipedIds([]);
       setHistory([]);
@@ -392,7 +389,6 @@ export default function CompanyHomeTab() {
   const filteredApplicants = applicants.filter(a => a.distanceKm <= maxDistanceKm && !blockedIds.includes(a.id) && !swipedIds.includes(a.id));
   const filteredApplicantRef = useRef(filteredApplicants);
   filteredApplicantRef.current = filteredApplicants;
-  const remainingSwipes = Math.max(MAX_SWIPES - swipesUsed, 0);
 
   const position       = useRef(new Animated.ValueXY()).current;
   const cardOpacity    = useRef(new Animated.Value(1)).current;
@@ -481,7 +477,6 @@ export default function CompanyHomeTab() {
   ).current;
 
   const commitSwipe = async (dir: number) => {
-    if (swipesUsed >= MAX_SWIPES) return;
     collapsePanel();
     const deck = filteredApplicantRef.current;
     const total = deck.length;
@@ -517,7 +512,6 @@ export default function CompanyHomeTab() {
       setPhotoIndex(0);
       photoScrollRef.current?.scrollTo({ x: 0, animated: false });
       advanceDeck();
-      setSwipesUsed(s => s + 1);
       growingApplicantRef.current = upcomingApplicant;
       requestAnimationFrame(() =>
         requestAnimationFrame(() =>
@@ -553,7 +547,6 @@ export default function CompanyHomeTab() {
     setSwipedIds([]);
     setHistory([]);
     setPhotoIndex(0);
-    setSwipesUsed(0);
     growingApplicantRef.current = null;
     pausedElapsedRef.current = 0;
     nextCardAnim.setValue(0);
@@ -734,26 +727,6 @@ export default function CompanyHomeTab() {
     );
   }
 
-  // ── All swiped ────────────────────────────────────────────────────────────
-  if (swipesUsed >= MAX_SWIPES) {
-    return (
-      <View style={s.emptyScreen}>
-        <StatusBar barStyle="dark-content" />
-        <View style={s.emptyIconWrap}>
-          <MaterialCommunityIcons name="lightning-bolt" size={40} color={Colors.primary} />
-        </View>
-        <Text style={s.emptyTitle}>Daily limit reached</Text>
-        <Text style={s.emptySub}>You've used all 15 swipes for today. Upgrade to Pro for unlimited swipes.</Text>
-        <TouchableOpacity
-          style={s.refreshBtn}
-          onPress={() => navigation.navigate('subscription' as never)}
-        >
-          <Text style={s.refreshBtnText}>Upgrade to Pro</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
   const applicant = filteredApplicants[index];
   const nextApplicant =
     growingApplicantRef.current ??
@@ -896,20 +869,6 @@ export default function CompanyHomeTab() {
               <MaterialCommunityIcons name="chevron-down" size={16} color="rgba(255,255,255,0.6)" />
             </TouchableOpacity>
             
-            {(() => {
-              const accentColor = remainingSwipes > Math.floor(MAX_SWIPES / 2)
-                ? '#10B981'
-                : remainingSwipes > Math.floor(MAX_SWIPES * 0.25)
-                  ? '#F59E0B'
-                  : '#EF4444';
-              return (
-                <View style={[s.swipeCounterPill, { borderColor: accentColor }]}>
-                  <Text style={[s.swipeCounterText, { color: accentColor }]}>
-                    {remainingSwipes}/{MAX_SWIPES}
-                  </Text>
-                </View>
-              );
-            })()}
             <TouchableOpacity style={s.iconPill} onPress={() => navigation.navigate('subscription' as never)}>
               <MaterialCommunityIcons name="lightning-bolt" size={19} color="#A78BFA" />
             </TouchableOpacity>
@@ -1350,20 +1309,6 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
-  },
-  swipeCounterPill: {
-    height: 38,
-    borderRadius: Radii.full,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    paddingHorizontal: 14,
-  },
-  swipeCounterText: {
-    fontSize: Typography.sm,
-    fontWeight: Typography.semibold,
-    letterSpacing: 0.2,
   },
   jobSelectorPill: {
     flex: 1,

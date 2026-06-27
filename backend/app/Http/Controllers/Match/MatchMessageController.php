@@ -77,7 +77,13 @@ class MatchMessageController extends Controller
 
         // Broadcast to WebSocket channel via Reverb only for newly created messages.
         if ($message->wasRecentlyCreated) {
+            \Log::info('Broadcasting message', [
+                'message_id' => $message->id,
+                'match_id' => $message->match_id,
+                'channel' => 'private-match.'.$message->match_id,
+            ]);
             broadcast(new MatchMessageSent($message))->toOthers();
+            \Log::info('Broadcast dispatched');
         }
 
         return $this->success(

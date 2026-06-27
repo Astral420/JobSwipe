@@ -40,7 +40,7 @@ class MatchController extends Controller
                 if ($mongoProfile) {
                     $data = $mongoProfile->toArray();
                     // Sign the profile photo URL so it's accessible from S3
-                    if (!empty($data['profile_photo_url'])) {
+                    if (! empty($data['profile_photo_url'])) {
                         $data['profile_photo_url'] = $this->toSignedReadUrl($data['profile_photo_url']);
                     }
                     $match->applicant->profile_data = $data;

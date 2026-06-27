@@ -10,6 +10,7 @@ import { useTabBarHeight } from '../../hooks/useTabBarHeight';
 import { useTheme } from '../../theme';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
+import { useMatchChannel, type IncomingMessage } from '../../hooks/useMatchChannel';
 
 // TODO: Add tests for company matches screen
 // Test cases should cover:
@@ -24,21 +25,21 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 const T = {
-  bg:          '#0f0a1e',
-  surface:     '#16102a',
+  bg: '#0f0a1e',
+  surface: '#16102a',
   surfaceHigh: '#1e1535',
-  border:      'rgba(168,85,247,0.18)',
+  border: 'rgba(168,85,247,0.18)',
   borderFaint: 'rgba(255,255,255,0.07)',
-  primary:     '#a855f7',
+  primary: '#a855f7',
   primaryDark: '#7c3aed',
   textPrimary: '#ffffff',
-  textSub:     'rgba(255,255,255,0.55)',
-  textHint:    'rgba(255,255,255,0.35)',
-  warning:     '#f59e0b',
-  warningLight:'rgba(245,158,11,0.12)',
-  success:     '#22c55e',
-  successLight:'rgba(34,197,94,0.12)',
-  rose:        '#ec4899',
+  textSub: 'rgba(255,255,255,0.55)',
+  textHint: 'rgba(255,255,255,0.35)',
+  warning: '#f59e0b',
+  warningLight: 'rgba(245,158,11,0.12)',
+  success: '#22c55e',
+  successLight: 'rgba(34,197,94,0.12)',
+  rose: '#ec4899',
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -62,15 +63,22 @@ type Match = {
 const PIPELINE_STAGES: {
   key: Status; label: string; icon: string; bg: string; text: string;
 }[] = [
-  { key: 'new',       label: 'New',       icon: 'account-plus-outline',   bg: 'rgba(255,255,255,0.07)', text: 'rgba(255,255,255,0.5)' },
-  { key: 'screening', label: 'Screening', icon: 'account-search-outline', bg: T.warningLight,           text: '#fbbf24'               },
-  { key: 'interview', label: 'Interview', icon: 'video-outline',          bg: 'rgba(168,85,247,0.15)',  text: '#c084fc'               },
-  { key: 'offer',     label: 'Offer 🎉',  icon: 'star-outline',           bg: T.successLight,           text: '#4ade80'               },
-  { key: 'closed',    label: 'Closed',    icon: 'lock-outline',           bg: 'rgba(255,255,255,0.05)', text: 'rgba(255,255,255,0.4)' },
-];
+    { key: 'new', label: 'New', icon: 'account-plus-outline', bg: 'rgba(255,255,255,0.07)', text: 'rgba(255,255,255,0.5)' },
+    { key: 'screening', label: 'Screening', icon: 'account-search-outline', bg: T.warningLight, text: '#fbbf24' },
+    { key: 'interview', label: 'Interview', icon: 'video-outline', bg: 'rgba(168,85,247,0.15)', text: '#c084fc' },
+    { key: 'offer', label: 'Offer 🎉', icon: 'star-outline', bg: T.successLight, text: '#4ade80' },
+    { key: 'closed', label: 'Closed', icon: 'lock-outline', bg: 'rgba(255,255,255,0.05)', text: 'rgba(255,255,255,0.4)' },
+  ];
 
 // ─── Chat data ────────────────────────────────────────────────────────────────
-type ChatMessage = { id: number; from: 'me' | 'them'; text: string; time: string; };
+type ChatMessage = {
+  id: string | number;
+  from: 'me' | 'them';
+  text: string;
+  time: string;
+  read?: boolean;      // true once the other party has read it
+  sending?: boolean;   // true while the optimistic message hasn't been confirmed
+};
 
 // ─── Review types ─────────────────────────────────────────────────────────────
 type Review = {
@@ -100,7 +108,7 @@ function EmptyMatchesState() {
   return (
     <View style={s.emptyWrap}>
       <View style={s.ghostStack}>
-        <GhostCard rotate="8deg"  translateX={42}  translateY={10} blur />
+        <GhostCard rotate="8deg" translateX={42} translateY={10} blur />
         <GhostCard rotate="-4deg" translateX={-10} translateY={0} />
         <View style={s.boltBadge}>
           <MaterialCommunityIcons name="lightning-bolt" size={17} color="#fff" />
@@ -178,23 +186,73 @@ function ConversationScreen({
   const [draft, setDraft] = useState('');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isTyping, setIsTyping] = useState(false);
+  const [theyRead, setTheyRead] = useState(false); // true once they've read our last message
   const scrollRef = useRef<ScrollView>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingEmitRef = useRef<number>(0);
 
+  // ── Initial message load ────────────────────────────────────────────────────
   const fetchMessages = useCallback(async () => {
     try {
       const msgs: any = await api.get(`/matches/${applicant.id}/messages`);
       const payload = Array.isArray(msgs) ? msgs : (Array.isArray(msgs?.data) ? msgs.data : []);
-      const items = payload.map((m: any) => ({
+      const items: ChatMessage[] = payload.map((m: any) => ({
         id: m.id,
         from: m.sender?.role === authRole ? 'me' as const : 'them' as const,
         text: m.body ?? '',
         time: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+        read: !!m.read_at,
       }));
       setMessages(items.reverse());
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     }
   }, [applicant.id, authRole]);
+
+  // ── Mark messages as read when conversation opens / new messages arrive ─────
+  const markAsRead = useCallback(async () => {
+    try {
+      await api.patch(`/matches/${applicant.id}/messages/read`, {});
+    } catch { /* silent */ }
+  }, [applicant.id]);
+
+  // ── Real-time: subscribe to match channel ───────────────────────────────────
+  useMatchChannel(applicant.id, {
+    onMessage: (data: IncomingMessage) => {
+      const isMe = data.sender_role === authRole;
+      const newMsg: ChatMessage = {
+        id: data.id,
+        from: isMe ? 'me' : 'them',
+        text: data.body,
+        time: new Date(data.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: !!data.read_at,
+      };
+      setMessages((prev) => {
+        // Deduplicate: replace the optimistic temp message (numeric id) if it exists
+        const exists = prev.some((m) => m.id === data.id);
+        if (exists) return prev;
+        // Remove any optimistic message with same text + from: 'me' that's still sending
+        const without = isMe
+          ? prev.filter((m) => !(m.sending && m.text === data.body))
+          : prev;
+        return [...without, newMsg];
+      });
+      // If the other side sent a message, mark it as read immediately
+      if (!isMe) markAsRead();
+    },
+    onTyping: () => {
+      setIsTyping(true);
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => setIsTyping(false), 3000);
+    },
+    onReadReceipt: () => {
+      // They've read our messages — mark all our sent messages as read
+      setTheyRead(true);
+      setMessages((prev) =>
+        prev.map((m) => (m.from === 'me' ? { ...m, read: true } : m))
+      );
+    },
+  });
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -218,30 +276,61 @@ function ConversationScreen({
 
   useEffect(() => {
     fetchMessages();
-    const interval = setInterval(fetchMessages, 5000);
-    return () => clearInterval(interval);
-  }, [fetchMessages]);
+    markAsRead();
+
+    // Poll every 4 s as a reliable fallback for WebSocket delivery.
+    // WS stays active — if it fires the message appears instantly;
+    // the poll guarantees it shows up even when WS events are dropped.
+    const pollInterval = setInterval(() => {
+      fetchMessages();
+      markAsRead();
+    }, 4000);
+
+    return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      clearInterval(pollInterval);
+    };
+  }, [fetchMessages, markAsRead]);
 
   const scrollToBottom = (animated = true) => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated }), 100);
   };
+
+  // Debounced typing indicator — fires at most once every 2 seconds
+  const emitTyping = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTypingEmitRef.current < 2000) return;
+    lastTypingEmitRef.current = now;
+    api.post(`/matches/${applicant.id}/messages/typing`, {}).catch(() => { });
+  }, [applicant.id]);
 
   const sendMessage = async () => {
     const text = draft.trim();
     if (!text) return;
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    // Client-side optimistic update
+    // Optimistic update — tagged as sending so real-time dedup can remove it
     const tempId = Date.now();
-    setMessages((prev) => [...prev, { id: tempId, from: 'me', text, time: now }]);
+    setMessages((prev) => [...prev, { id: tempId, from: 'me', text, time: now, sending: true }]);
     setDraft('');
+    setTheyRead(false);
     scrollToBottom();
 
     try {
       await api.post(`/matches/${applicant.id}/messages`, { body: text });
-      fetchMessages();
+      // Real-time echo will deliver the confirmed message; if it doesn't arrive
+      // within 3s (e.g. WS is down) we fall back to a re-fetch.
+      setTimeout(() => {
+        setMessages((prev) => {
+          const stillPending = prev.some((m) => m.sending && m.text === text);
+          if (stillPending) fetchMessages();
+          return prev;
+        });
+      }, 3000);
     } catch (err) {
       console.error('Failed to send message:', err);
+      // Remove the optimistic message on error
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
     }
   };
 
@@ -290,7 +379,9 @@ function ConversationScreen({
             const prevMsg = messages[i - 1];
             const nextMsg = messages[i + 1];
             const isFirstInGroup = i === 0 || prevMsg.from !== msg.from;
-            const isLastInGroup  = i === messages.length - 1 || nextMsg?.from !== msg.from;
+            const isLastInGroup = i === messages.length - 1 || nextMsg?.from !== msg.from;
+            // Show 'Read' receipt only under the last outgoing message in the last group
+            const showRead = isMe && isLastInGroup && msg.read && i === messages.length - 1;
 
             return (
               <View
@@ -308,11 +399,11 @@ function ConversationScreen({
                 <View style={cs.bubbleCol}>
                   <View style={[
                     cs.bubble,
-                    isMe ? [cs.bubbleMe, { backgroundColor: T.primary }] : [cs.bubbleThem, { backgroundColor: T.surfaceHigh, borderColor: T.borderFaint }],
+                    isMe ? [cs.bubbleMe, { backgroundColor: msg.sending ? T.primaryDark : T.primary }] : [cs.bubbleThem, { backgroundColor: T.surfaceHigh, borderColor: T.borderFaint }],
                     !isMe && isFirstInGroup && cs.bubbleThemFirst,
-                    !isMe && isLastInGroup  && cs.bubbleThemLast,
-                    isMe  && isFirstInGroup && cs.bubbleMeFirst,
-                    isMe  && isLastInGroup  && cs.bubbleMeLast,
+                    !isMe && isLastInGroup && cs.bubbleThemLast,
+                    isMe && isFirstInGroup && cs.bubbleMeFirst,
+                    isMe && isLastInGroup && cs.bubbleMeLast,
                   ]}>
                     <Text style={[cs.bubbleText, isMe ? cs.bubbleTextMe : [cs.bubbleTextThem, { color: T.textPrimary }]]}>
                       {msg.text}
@@ -320,7 +411,12 @@ function ConversationScreen({
                   </View>
                   {isLastInGroup && (
                     <Text style={[cs.bubbleTime, { color: T.textHint }, isMe ? cs.bubbleTimeMe : cs.bubbleTimeThem]}>
-                      {msg.time}
+                      {msg.time}{msg.sending ? ' · Sending…' : ''}
+                    </Text>
+                  )}
+                  {showRead && (
+                    <Text style={[cs.bubbleTime, cs.bubbleTimeMe, { color: T.primary, fontSize: 10, marginTop: 2 }]}>
+                      ✓✓ Read
                     </Text>
                   )}
                 </View>
@@ -354,7 +450,7 @@ function ConversationScreen({
             <TextInput
               style={[cs.input, { backgroundColor: T.surface, borderColor: T.borderFaint, color: T.textPrimary }]}
               value={draft}
-              onChangeText={setDraft}
+              onChangeText={(t) => { setDraft(t); emitTyping(); }}
               placeholder="Message…"
               placeholderTextColor={T.textHint}
               multiline
@@ -380,13 +476,13 @@ export default function CompanyMatchesScreen() {
   const T = useTheme();
   const tabBarHeight = useTabBarHeight();
   const { top: topInset } = useSafeAreaInsets();
-  
+
   // API state
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // UI state
   const [activeTab, setActiveTab] = useState('matches');
   const [selectedConversation, setSelectedConversation] = useState<Match | null>(null);
@@ -410,20 +506,20 @@ export default function CompanyMatchesScreen() {
   const fetchMatches = useCallback(async (showLoader = true) => {
     if (showLoader) setLoading(true);
     setError(null);
-    
+
     try {
       const response: any = await api.get('/company/matches');
-      
+
       // The axios interceptor unwraps `response.data` (the API envelope's `data` field),
       // so `response` here is the Laravel paginator: { data: [...], current_page, ... }
       const items: any[] = response?.data ?? [];
-      
+
       const transformedMatches: Match[] = items.map((item: any) => {
         // `item.applicant` is the PostgreSQL ApplicantProfile.
         // `item.applicant.profile_data` is the MongoDB profile attached by the backend.
         const applicant = item.applicant ?? {};
         const profile = applicant.profile_data ?? {};
-        
+
         // Map backend statuses (pending/accepted/closed/expired/declined) to UI statuses
         const rawStatus = item.status ?? 'pending';
         let uiStatus: Status;
@@ -449,7 +545,7 @@ export default function CompanyMatchesScreen() {
           jobTitle,
         };
       });
-      
+
       setMatches(transformedMatches);
     } catch (err: any) {
       console.error('Failed to fetch matches:', err);
@@ -477,7 +573,7 @@ export default function CompanyMatchesScreen() {
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
-    
+
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m`;
     if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h`;
@@ -489,12 +585,12 @@ export default function CompanyMatchesScreen() {
 
   const handleSubmitReview = async () => {
     if (!selectedApplicantId || reviewRating === 0 || !reviewTitle.trim() || !reviewBody.trim()) return;
-    
+
     try {
       // Find the match to get company ID
       const match = matches.find(m => m.id === selectedApplicantId);
       if (!match) return;
-      
+
       // Submit review to API
       await api.post('/reviews', {
         company_id: match.jobId, // This should be company_id, need to verify backend
@@ -502,7 +598,7 @@ export default function CompanyMatchesScreen() {
         title: reviewTitle.trim(),
         body: reviewBody.trim(),
       });
-      
+
       const review: Review = {
         id: Date.now(),
         applicantId: selectedApplicantId,
@@ -511,13 +607,13 @@ export default function CompanyMatchesScreen() {
         body: reviewBody.trim(),
         date: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
       };
-      
+
       setSubmittedReviews(prev => [review, ...prev]);
       setReviewSubmitted(true);
       setReviewRating(0);
       setReviewTitle('');
       setReviewBody('');
-      
+
       setTimeout(() => {
         setReviewSubmitted(false);
         setSelectedApplicantId(null);
@@ -537,9 +633,9 @@ export default function CompanyMatchesScreen() {
   };
 
   const tabs = [
-    { key: 'matches',  label: 'Matches',  badge: newMatches.length },
+    { key: 'matches', label: 'Matches', badge: newMatches.length },
     { key: 'messages', label: 'Messages', badge: totalUnread },
-    { key: 'reviews',  label: 'Review',   badge: 0 },
+    { key: 'reviews', label: 'Review', badge: 0 },
   ];
 
   // ── Full-screen conversation swap (mirrors teammate's pattern exactly) ──────
@@ -732,15 +828,15 @@ export default function CompanyMatchesScreen() {
                           s.statusPill,
                           msg.status === 'screening' && { backgroundColor: T.warningLight },
                           msg.status === 'interview' && { backgroundColor: 'rgba(168,85,247,0.15)' },
-                          msg.status === 'offer'     && { backgroundColor: T.successLight },
-                          msg.status === 'new'       && { backgroundColor: 'rgba(255,255,255,0.07)' },
+                          msg.status === 'offer' && { backgroundColor: T.successLight },
+                          msg.status === 'new' && { backgroundColor: 'rgba(255,255,255,0.07)' },
                         ]}>
                           <Text style={[
                             s.statusPillText,
                             msg.status === 'screening' && { color: '#fbbf24' },
                             msg.status === 'interview' && { color: '#c084fc' },
-                            msg.status === 'offer'     && { color: '#4ade80' },
-                            msg.status === 'new'       && { color: 'rgba(255,255,255,0.5)' },
+                            msg.status === 'offer' && { color: '#4ade80' },
+                            msg.status === 'new' && { color: 'rgba(255,255,255,0.5)' },
                           ]}>
                             {msg.status.charAt(0).toUpperCase() + msg.status.slice(1)}
                           </Text>
@@ -923,7 +1019,7 @@ export default function CompanyMatchesScreen() {
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: T.bg },
 
-  header:    { paddingHorizontal: 20, paddingBottom: 12, paddingTop: 8 },
+  header: { paddingHorizontal: 20, paddingBottom: 12, paddingTop: 8 },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   pageTitle: { fontSize: 28, fontWeight: '800', color: T.textPrimary, letterSpacing: -0.5 },
   filterBtn: {
@@ -937,164 +1033,164 @@ const s = StyleSheet.create({
     backgroundColor: T.surface, borderRadius: 14,
     borderWidth: 1, borderColor: T.borderFaint, padding: 4,
   },
-  segTab:           { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 9, borderRadius: 10, gap: 6 },
-  segTabActive:     { backgroundColor: T.primary },
-  segTabText:       { fontSize: 13, fontWeight: '600', color: T.textSub },
+  segTab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 9, borderRadius: 10, gap: 6 },
+  segTabActive: { backgroundColor: T.primary },
+  segTabText: { fontSize: 13, fontWeight: '600', color: T.textSub },
   segTabTextActive: { color: '#fff', fontWeight: '700' },
-  segBadge:         { backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 18, alignItems: 'center' },
-  segBadgeText:     { fontSize: 10, fontWeight: '700', color: '#fff' },
+  segBadge: { backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1, minWidth: 18, alignItems: 'center' },
+  segBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
 
   scroll: { paddingHorizontal: 20 },
 
-  sectionRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 4 },
+  sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, marginTop: 4 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: T.textPrimary },
-  viewAll:      { fontSize: 13, fontWeight: '600', color: T.primary },
+  viewAll: { fontSize: 13, fontWeight: '600', color: T.primary },
 
-  card:    { backgroundColor: T.surface, borderRadius: 20, borderWidth: 1, borderColor: T.borderFaint, padding: 14, marginBottom: 16 },
+  card: { backgroundColor: T.surface, borderRadius: 20, borderWidth: 1, borderColor: T.borderFaint, padding: 14, marginBottom: 16 },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: T.borderFaint, marginVertical: 8 },
 
   // Empty state
-  emptyWrap:      { alignItems: 'center', paddingTop: 24, paddingHorizontal: 32 },
-  ghostStack:     { width: SCREEN_WIDTH - 64, height: 210, position: 'relative', alignItems: 'center', justifyContent: 'center', marginBottom: 28 },
-  ghostCard:      { position: 'absolute', width: 136, height: 182, borderRadius: 20, backgroundColor: T.surface, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 20, elevation: 6, overflow: 'hidden' },
-  ghostPhoto:     { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(168,85,247,0.08)' },
-  ghostMeta:      { padding: 12, backgroundColor: T.surface },
-  ghostLine:      { height: 8, borderRadius: 4, backgroundColor: T.borderFaint },
-  boltBadge:      { position: 'absolute', top: 14, left: '28%' as any, width: 34, height: 34, borderRadius: 17, backgroundColor: '#f97316', alignItems: 'center', justifyContent: 'center', shadowColor: '#f97316', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6, zIndex: 10 },
-  emptyTitle:     { fontSize: 21, fontWeight: '800', color: T.textPrimary, textAlign: 'center', lineHeight: 30, marginBottom: 12, letterSpacing: -0.3 },
-  emptySub:       { fontSize: 14, color: T.textSub, textAlign: 'center', lineHeight: 21, marginBottom: 32 },
-  boostBtn:       { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: T.primary, borderRadius: 50, paddingVertical: 16, paddingHorizontal: 40, marginBottom: 16, width: '100%', justifyContent: 'center', shadowColor: T.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 4 },
-  boostIconWrap:  { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  boostBtnText:   { fontSize: 16, fontWeight: '700', color: '#fff' },
-  editProfileText:{ fontSize: 15, fontWeight: '600', color: T.textSub, textDecorationLine: 'underline' },
+  emptyWrap: { alignItems: 'center', paddingTop: 24, paddingHorizontal: 32 },
+  ghostStack: { width: SCREEN_WIDTH - 64, height: 210, position: 'relative', alignItems: 'center', justifyContent: 'center', marginBottom: 28 },
+  ghostCard: { position: 'absolute', width: 136, height: 182, borderRadius: 20, backgroundColor: T.surface, borderWidth: 1, borderColor: T.border, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 20, elevation: 6, overflow: 'hidden' },
+  ghostPhoto: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(168,85,247,0.08)' },
+  ghostMeta: { padding: 12, backgroundColor: T.surface },
+  ghostLine: { height: 8, borderRadius: 4, backgroundColor: T.borderFaint },
+  boltBadge: { position: 'absolute', top: 14, left: '28%' as any, width: 34, height: 34, borderRadius: 17, backgroundColor: '#f97316', alignItems: 'center', justifyContent: 'center', shadowColor: '#f97316', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6, zIndex: 10 },
+  emptyTitle: { fontSize: 21, fontWeight: '800', color: T.textPrimary, textAlign: 'center', lineHeight: 30, marginBottom: 12, letterSpacing: -0.3 },
+  emptySub: { fontSize: 14, color: T.textSub, textAlign: 'center', lineHeight: 21, marginBottom: 32 },
+  boostBtn: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: T.primary, borderRadius: 50, paddingVertical: 16, paddingHorizontal: 40, marginBottom: 16, width: '100%', justifyContent: 'center', shadowColor: T.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 12, elevation: 4 },
+  boostIconWrap: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
+  boostBtnText: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  editProfileText: { fontSize: 15, fontWeight: '600', color: T.textSub, textDecorationLine: 'underline' },
 
   // New applicants
-  newMatchRow:  { flexDirection: 'row', gap: 16, paddingBottom: 4 },
+  newMatchRow: { flexDirection: 'row', gap: 16, paddingBottom: 4 },
   newMatchItem: { alignItems: 'center', width: 70 },
-  newDot:       { position: 'absolute', bottom: 1, right: 1, width: 18, height: 18, borderRadius: 9, backgroundColor: T.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: T.surface },
+  newDot: { position: 'absolute', bottom: 1, right: 1, width: 18, height: 18, borderRadius: 9, backgroundColor: T.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: T.surface },
   newMatchName: { fontSize: 11, fontWeight: '600', color: T.textPrimary, textAlign: 'center', marginTop: 6 },
   newMatchRole: { fontSize: 10, color: T.textHint, textAlign: 'center', marginTop: 1 },
 
   // Pipeline
-  stageHeader:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  stagePill:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  stageHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  stagePill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   stagePillText: { fontSize: 12, fontWeight: '700' },
-  stageCount:    { fontSize: 12, color: T.textHint, fontWeight: '600' },
-  pipelineRow:   { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
-  pipelineInfo:  { flex: 1 },
-  pipelineName:  { fontSize: 15, fontWeight: '600', color: T.textPrimary },
-  pipelineRole:  { fontSize: 13, color: T.textSub, marginTop: 1 },
+  stageCount: { fontSize: 12, color: T.textHint, fontWeight: '600' },
+  pipelineRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8 },
+  pipelineInfo: { flex: 1 },
+  pipelineName: { fontSize: 15, fontWeight: '600', color: T.textPrimary },
+  pipelineRole: { fontSize: 13, color: T.textSub, marginTop: 1 },
 
   // Messages
-  msgRow:          { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 6 },
-  msgRowExpired:   { opacity: 0.5 },
-  unreadBadge:     { position: 'absolute', top: -2, right: -2, width: 16, height: 16, borderRadius: 8, backgroundColor: T.primary, borderWidth: 2, borderColor: T.surface, alignItems: 'center', justifyContent: 'center' },
+  msgRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 6 },
+  msgRowExpired: { opacity: 0.5 },
+  unreadBadge: { position: 'absolute', top: -2, right: -2, width: 16, height: 16, borderRadius: 8, backgroundColor: T.primary, borderWidth: 2, borderColor: T.surface, alignItems: 'center', justifyContent: 'center' },
   unreadBadgeText: { fontSize: 9, fontWeight: '700', color: '#fff' },
-  msgBody:         { flex: 1 },
-  msgTopRow:       { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 1 },
-  msgName:         { fontSize: 15, fontWeight: '700', color: T.textPrimary },
-  msgTime:         { fontSize: 11, color: T.textHint },
-  msgRole:         { fontSize: 13, color: T.textSub, marginBottom: 3 },
-  msgPreview:      { fontSize: 13, color: T.textSub, lineHeight: 18, marginBottom: 6 },
-  msgFaded:        { color: 'rgba(255,255,255,0.25)' },
-  statusPill:      { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
-  statusPillText:  { fontSize: 11, fontWeight: '700' },
-  expiredRow:      { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' },
-  closedTag:       { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: T.borderFaint, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
-  closedTagText:   { fontSize: 11, fontWeight: '600', color: T.textHint },
-  leaveReviewBtn:  { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(168,85,247,0.12)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: T.border },
+  msgBody: { flex: 1 },
+  msgTopRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 1 },
+  msgName: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
+  msgTime: { fontSize: 11, color: T.textHint },
+  msgRole: { fontSize: 13, color: T.textSub, marginBottom: 3 },
+  msgPreview: { fontSize: 13, color: T.textSub, lineHeight: 18, marginBottom: 6 },
+  msgFaded: { color: 'rgba(255,255,255,0.25)' },
+  statusPill: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
+  statusPillText: { fontSize: 11, fontWeight: '700' },
+  expiredRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' },
+  closedTag: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: T.borderFaint, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  closedTagText: { fontSize: 11, fontWeight: '600', color: T.textHint },
+  leaveReviewBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(168,85,247,0.12)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: T.border },
   leaveReviewBtnText: { fontSize: 11, fontWeight: '700', color: T.primary },
 
   // Reviews
-  backBtn:            { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, marginBottom: 6 },
-  backBtnText:        { fontSize: 14, fontWeight: '600', color: T.primary },
-  detailCard:         { backgroundColor: T.surface, borderRadius: 20, borderWidth: 1, borderColor: T.borderFaint, padding: 18, marginBottom: 16 },
-  detailHeader:       { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  detailName:         { fontSize: 20, fontWeight: '800', color: T.textPrimary, letterSpacing: -0.3, marginBottom: 3 },
-  detailRole:         { fontSize: 14, color: T.textSub, marginBottom: 8 },
-  detailDivider:      { height: StyleSheet.hairlineWidth, backgroundColor: T.borderFaint, marginVertical: 16 },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, marginBottom: 6 },
+  backBtnText: { fontSize: 14, fontWeight: '600', color: T.primary },
+  detailCard: { backgroundColor: T.surface, borderRadius: 20, borderWidth: 1, borderColor: T.borderFaint, padding: 18, marginBottom: 16 },
+  detailHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  detailName: { fontSize: 20, fontWeight: '800', color: T.textPrimary, letterSpacing: -0.3, marginBottom: 3 },
+  detailRole: { fontSize: 14, color: T.textSub, marginBottom: 8 },
+  detailDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.borderFaint, marginVertical: 16 },
   detailSectionLabel: { fontSize: 11, fontWeight: '700', letterSpacing: 1.2, color: T.textHint, marginBottom: 12 },
-  successCard:        { alignItems: 'center', paddingVertical: 28, backgroundColor: 'rgba(34,197,94,0.08)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(34,197,94,0.2)', gap: 8, marginBottom: 12 },
-  successCardTitle:   { fontSize: 18, fontWeight: '700', color: '#4ade80' },
-  successCardSub:     { fontSize: 14, color: 'rgba(74,222,128,0.6)' },
-  fieldLabel:         { fontSize: 13, fontWeight: '600', color: T.textSub, marginBottom: 6, marginTop: 12 },
-  starsRow:           { flexDirection: 'row', gap: 6, marginBottom: 6 },
-  ratingLabel:        { fontSize: 13, fontWeight: '600', color: T.warning, marginBottom: 12 },
-  textField:          { backgroundColor: T.surfaceHigh, borderRadius: 14, borderWidth: 1, borderColor: T.borderFaint, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: T.textPrimary, marginBottom: 10 },
-  textArea:           { minHeight: 100, paddingTop: 10 },
-  submitBtn:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: T.primary, borderRadius: 50, paddingVertical: 14, marginTop: 4 },
-  submitBtnDisabled:  { opacity: 0.4 },
-  submitBtnText:      { fontSize: 15, fontWeight: '700', color: '#fff' },
-  applicantListRow:   { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
-  applicantListInfo:  { flex: 1 },
-  applicantListName:  { fontSize: 15, fontWeight: '600', color: T.textPrimary },
-  applicantListRole:  { fontSize: 13, color: T.textSub, marginTop: 1 },
-  reviewedRow:        { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
-  reviewedText:       { fontSize: 11, color: '#4ade80', fontWeight: '600' },
-  reviewHint:         { fontSize: 11, color: T.primary, marginTop: 4 },
-  reviewsEmptyWrap:   { alignItems: 'center', paddingVertical: 60, gap: 12 },
-  reviewsEmptyTitle:  { fontSize: 17, fontWeight: '700', color: T.textSub, textAlign: 'center' },
-  reviewsEmptySub:    { fontSize: 13, color: T.textHint, textAlign: 'center', lineHeight: 20, paddingHorizontal: 24 },
-  reviewCard:         { gap: 5 },
-  reviewStarsRow:     { flexDirection: 'row', alignItems: 'center', gap: 2 },
-  reviewDate:         { fontSize: 11, color: T.textHint, marginLeft: 6 },
-  reviewTitle:        { fontSize: 14, fontWeight: '600', color: T.textPrimary },
-  reviewBody:         { fontSize: 13, color: T.textSub, lineHeight: 20 },
+  successCard: { alignItems: 'center', paddingVertical: 28, backgroundColor: 'rgba(34,197,94,0.08)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(34,197,94,0.2)', gap: 8, marginBottom: 12 },
+  successCardTitle: { fontSize: 18, fontWeight: '700', color: '#4ade80' },
+  successCardSub: { fontSize: 14, color: 'rgba(74,222,128,0.6)' },
+  fieldLabel: { fontSize: 13, fontWeight: '600', color: T.textSub, marginBottom: 6, marginTop: 12 },
+  starsRow: { flexDirection: 'row', gap: 6, marginBottom: 6 },
+  ratingLabel: { fontSize: 13, fontWeight: '600', color: T.warning, marginBottom: 12 },
+  textField: { backgroundColor: T.surfaceHigh, borderRadius: 14, borderWidth: 1, borderColor: T.borderFaint, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: T.textPrimary, marginBottom: 10 },
+  textArea: { minHeight: 100, paddingTop: 10 },
+  submitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: T.primary, borderRadius: 50, paddingVertical: 14, marginTop: 4 },
+  submitBtnDisabled: { opacity: 0.4 },
+  submitBtnText: { fontSize: 15, fontWeight: '700', color: '#fff' },
+  applicantListRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
+  applicantListInfo: { flex: 1 },
+  applicantListName: { fontSize: 15, fontWeight: '600', color: T.textPrimary },
+  applicantListRole: { fontSize: 13, color: T.textSub, marginTop: 1 },
+  reviewedRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  reviewedText: { fontSize: 11, color: '#4ade80', fontWeight: '600' },
+  reviewHint: { fontSize: 11, color: T.primary, marginTop: 4 },
+  reviewsEmptyWrap: { alignItems: 'center', paddingVertical: 60, gap: 12 },
+  reviewsEmptyTitle: { fontSize: 17, fontWeight: '700', color: T.textSub, textAlign: 'center' },
+  reviewsEmptySub: { fontSize: 13, color: T.textHint, textAlign: 'center', lineHeight: 20, paddingHorizontal: 24 },
+  reviewCard: { gap: 5 },
+  reviewStarsRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  reviewDate: { fontSize: 11, color: T.textHint, marginLeft: 6 },
+  reviewTitle: { fontSize: 14, fontWeight: '600', color: T.textPrimary },
+  reviewBody: { fontSize: 13, color: T.textSub, lineHeight: 20 },
 });
 
 // ─── Conversation screen styles ───────────────────────────────────────────────
 const cs = StyleSheet.create({
   screen: { flex: 1, backgroundColor: T.bg },
 
-  header:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
-  backBtn:        { width: 38, height: 38, borderRadius: 19, backgroundColor: T.surface, borderWidth: 1, borderColor: T.borderFaint, alignItems: 'center', justifyContent: 'center' },
-  headerAvatar:   { width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: T.border },
-  headerInfo:     { flex: 1 },
-  headerName:     { fontSize: 15, fontWeight: '700', color: T.textPrimary },
-  headerRole:     { fontSize: 12, color: T.textSub, marginTop: 1 },
-  typingLabel:    { fontSize: 12, color: T.primary, fontStyle: 'italic', marginTop: 1 },
-  statusBadge:    { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-  statusBadgeText:{ fontSize: 11, fontWeight: '700' },
-  headerDivider:  { height: StyleSheet.hairlineWidth, backgroundColor: T.borderFaint },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 },
+  backBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: T.surface, borderWidth: 1, borderColor: T.borderFaint, alignItems: 'center', justifyContent: 'center' },
+  headerAvatar: { width: 40, height: 40, borderRadius: 12, borderWidth: 1, borderColor: T.border },
+  headerInfo: { flex: 1 },
+  headerName: { fontSize: 15, fontWeight: '700', color: T.textPrimary },
+  headerRole: { fontSize: 12, color: T.textSub, marginTop: 1 },
+  typingLabel: { fontSize: 12, color: T.primary, fontStyle: 'italic', marginTop: 1 },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
+  statusBadgeText: { fontSize: 11, fontWeight: '700' },
+  headerDivider: { height: StyleSheet.hairlineWidth, backgroundColor: T.borderFaint },
 
-  msgScroll:   { flex: 1 },
-  msgContent:  { paddingHorizontal: 16, paddingTop: 16, gap: 4 },
+  msgScroll: { flex: 1 },
+  msgContent: { paddingHorizontal: 16, paddingTop: 16, gap: 4 },
 
-  bubbleWrap:     { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 2 },
-  bubbleWrapMe:   { justifyContent: 'flex-end' },
+  bubbleWrap: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 2 },
+  bubbleWrapMe: { justifyContent: 'flex-end' },
   bubbleWrapThem: { justifyContent: 'flex-start' },
 
-  bubbleAvatar:       { width: 28, height: 28, borderRadius: 9, marginBottom: 2 },
+  bubbleAvatar: { width: 28, height: 28, borderRadius: 9, marginBottom: 2 },
   bubbleAvatarSpacer: { width: 28 },
-  bubbleCol:          { maxWidth: SCREEN_WIDTH * 0.72, gap: 3 },
+  bubbleCol: { maxWidth: SCREEN_WIDTH * 0.72, gap: 3 },
 
-  bubble:          { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
-  bubbleMe:        { backgroundColor: T.primary, borderBottomRightRadius: 4 },
-  bubbleThem:      { backgroundColor: T.surfaceHigh, borderWidth: 1, borderColor: T.borderFaint, borderBottomLeftRadius: 4 },
-  bubbleMeFirst:   { borderTopRightRadius: 18 },
-  bubbleMeLast:    { borderBottomRightRadius: 4 },
+  bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+  bubbleMe: { backgroundColor: T.primary, borderBottomRightRadius: 4 },
+  bubbleThem: { backgroundColor: T.surfaceHigh, borderWidth: 1, borderColor: T.borderFaint, borderBottomLeftRadius: 4 },
+  bubbleMeFirst: { borderTopRightRadius: 18 },
+  bubbleMeLast: { borderBottomRightRadius: 4 },
   bubbleThemFirst: { borderTopLeftRadius: 18 },
-  bubbleThemLast:  { borderBottomLeftRadius: 4 },
+  bubbleThemLast: { borderBottomLeftRadius: 4 },
 
-  bubbleText:     { fontSize: 14, lineHeight: 20 },
-  bubbleTextMe:   { color: '#fff' },
+  bubbleText: { fontSize: 14, lineHeight: 20 },
+  bubbleTextMe: { color: '#fff' },
   bubbleTextThem: { color: T.textPrimary },
-  bubbleTime:     { fontSize: 10, color: T.textHint },
-  bubbleTimeMe:   { textAlign: 'right' },
+  bubbleTime: { fontSize: 10, color: T.textHint },
+  bubbleTimeMe: { textAlign: 'right' },
   bubbleTimeThem: { textAlign: 'left' },
 
   typingBubble: { paddingVertical: 12, paddingHorizontal: 16 },
-  typingDots:   { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  typingDot:    { width: 7, height: 7, borderRadius: 4, backgroundColor: T.textHint },
-  typingDot1:   {},
-  typingDot2:   { opacity: 0.65 },
-  typingDot3:   { opacity: 0.35 },
+  typingDots: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  typingDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: T.textHint },
+  typingDot1: {},
+  typingDot2: { opacity: 0.65 },
+  typingDot3: { opacity: 0.35 },
 
-  expiredBanner:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 16, marginBottom: 8, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: T.surface, borderRadius: 12, borderWidth: 1, borderColor: T.borderFaint, alignSelf: 'center' },
+  expiredBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 16, marginBottom: 8, paddingVertical: 8, paddingHorizontal: 16, backgroundColor: T.surface, borderRadius: 12, borderWidth: 1, borderColor: T.borderFaint, alignSelf: 'center' },
   expiredBannerText: { fontSize: 12, color: T.textHint, fontWeight: '600' },
 
-  inputBar:        { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 16, paddingTop: 10, backgroundColor: T.bg, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.borderFaint },
-  input:           { flex: 1, minHeight: 44, maxHeight: 120, backgroundColor: T.surface, borderRadius: 22, borderWidth: 1, borderColor: T.borderFaint, paddingHorizontal: 16, paddingVertical: 11, fontSize: 14, color: T.textPrimary },
-  sendBtn:         { width: 44, height: 44, borderRadius: 22, backgroundColor: T.primary, alignItems: 'center', justifyContent: 'center' },
+  inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 16, paddingTop: 10, backgroundColor: T.bg, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: T.borderFaint },
+  input: { flex: 1, minHeight: 44, maxHeight: 120, backgroundColor: T.surface, borderRadius: 22, borderWidth: 1, borderColor: T.borderFaint, paddingHorizontal: 16, paddingVertical: 11, fontSize: 14, color: T.textPrimary },
+  sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: T.primary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { opacity: 0.35 },
 });
