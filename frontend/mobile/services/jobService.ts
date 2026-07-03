@@ -13,7 +13,9 @@ export type JobPayload = {
   salary_min?: number | null;
   salary_max?: number | null;
   salary_is_hidden?: boolean;
+  salary_period?: 'monthly' | 'yearly';
   work_type?: string;
+  employment_type?: 'full_time' | 'part_time' | 'contract' | 'internship';
   location?: string;
   location_city?: string;
   location_region?: string;
@@ -28,13 +30,15 @@ export type Job = {
   salary_min?: number | null;
   salary_max?: number | null;
   salary_is_hidden?: boolean;
+  salary_period?: 'monthly' | 'yearly';
   work_type?: string;
+  employment_type?: 'full_time' | 'part_time' | 'contract' | 'internship';
   location?: string;
   location_city?: string;
   location_region?: string;
   interview_template?: string;
   skills?: Array<{ name: string; type: 'hard' | 'soft' }>;
-  status: 'open' | 'closed' | 'paused';
+  status: 'active' | 'open' | 'closed' | 'paused';
   applicants_count?: number;
   created_at?: string;
   updated_at?: string;
@@ -45,25 +49,25 @@ export const jobService = {
    * Fetch all jobs for the authenticated company
    */
   list: async (): Promise<Job[]> => {
-    const response = await api.get('/company/jobs');
-    // Handle different response structures
-    return response.jobs || response.data || [];
+    const response = (await api.get('/company/jobs')) as any;
+    // Interceptor unwraps to the paginated object; .data holds the jobs array
+    return response?.data || response || [];
   },
 
   /**
    * Create a new job posting
    */
   create: async (payload: JobPayload): Promise<Job> => {
-    const response = await api.post('/company/jobs', payload);
-    return response.job || response.data;
+    const response = (await api.post('/company/jobs', payload)) as any;
+    return response;
   },
 
   /**
    * Update an existing job posting
    */
   update: async (id: number, payload: Partial<JobPayload>): Promise<Job> => {
-    const response = await api.put(`/company/jobs/${id}`, payload);
-    return response.job || response.data;
+    const response = (await api.put(`/company/jobs/${id}`, payload)) as any;
+    return response;
   },
 
   /**
@@ -77,23 +81,23 @@ export const jobService = {
    * Close/pause a job posting
    */
   close: async (id: number): Promise<Job> => {
-    const response = await api.post(`/company/jobs/${id}/close`);
-    return response.job || response.data;
+    const response = (await api.post(`/company/jobs/${id}/close`)) as any;
+    return response;
   },
 
   /**
-   * Restore/reopen a closed job posting
+   * Reopen a closed job posting (sets status back to active)
    */
-  restore: async (id: number): Promise<Job> => {
-    const response = await api.post(`/company/jobs/${id}/restore`);
-    return response.job || response.data;
+  reopen: async (id: number): Promise<Job> => {
+    const response = (await api.post(`/company/jobs/${id}/reopen`)) as any;
+    return response;
   },
 
   /**
    * Get a single job by ID
    */
   get: async (id: number): Promise<Job> => {
-    const response = await api.get(`/company/jobs/${id}`);
-    return response.job || response.data;
+    const response = (await api.get(`/company/jobs/${id}`)) as any;
+    return response;
   },
 };

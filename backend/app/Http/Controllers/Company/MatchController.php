@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Company;
 
 use App\Http\Controllers\Controller;
+use App\Models\MongoDB\ApplicantProfileDocument;
+use App\Services\FileUploadService;
 use App\Services\MatchService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,6 +13,7 @@ class MatchController extends Controller
 {
     public function __construct(
         private MatchService $matchService,
+        private ?FileUploadService $fileUploads = null,
     ) {}
 
     /**
@@ -28,6 +31,24 @@ class MatchController extends Controller
             status: $request->input('status'),
             perPage: $this->resolvePerPage($request),
         );
+
+        // Attach MongoDB profile data to each match's applicant
+        // (same pattern as ApplicantReviewController::getApplicants)
+        foreach ($matches as $match) {
+            if ($match->applicant) {
+                $mongoProfile = ApplicantProfileDocument::where('user_id', $match->applicant->user_id)->first();
+                if ($mongoProfile) {
+                    $data = $mongoProfile->toArray();
+                    // Sign the profile photo URL so it's accessible from S3
+                    if (! empty($data['profile_photo_url'])) {
+                        $data['profile_photo_url'] = $this->toSignedReadUrl($data['profile_photo_url']);
+                    }
+                    $match->applicant->profile_data = $data;
+                } else {
+                    $match->applicant->profile_data = null;
+                }
+            }
+        }
 
         return $this->success($matches, 'Matches retrieved.');
     }
@@ -72,5 +93,23 @@ class MatchController extends Controller
         }
 
         return min($perPage, $max);
+    }
+
+    private function toSignedReadUrl(string $fileUrl): string
+    {
+        if ($this->fileUploads === null) {
+            $this->fileUploads = app(FileUploadService::class);
+        }
+
+        try {
+            $result = $this->fileUploads->generatePresignedReadUrl($fileUrl);
+            if (isset($result['read_url']) && is_string($result['read_url'])) {
+                return $result['read_url'];
+            }
+        } catch (\Throwable) {
+            // Fall back to raw value if signing fails
+        }
+
+        return $fileUrl;
     }
 }

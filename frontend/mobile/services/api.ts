@@ -1,8 +1,9 @@
 import axios from 'axios';
 import { Alert } from 'react-native';
 import { useAuthStore } from '../store/authStore';
+import { getSocketId } from './echo';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -11,10 +12,15 @@ export const api = axios.create({
   },
 });
 
-// Request interceptor: Add auth token to all requests
+// Request interceptor: Add auth token + Pusher socket ID to all requests
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token;
   if (token) config.headers.Authorization = `Bearer ${token}`;
+
+  // Attach socket ID so Laravel's broadcast()->toOthers() can exclude the sender
+  const socketId = getSocketId();
+  if (socketId) config.headers['X-Socket-ID'] = socketId;
+
   return config;
 });
 

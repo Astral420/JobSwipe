@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\MongoDB\ApplicantProfileDocument;
+use App\Models\MongoDB\CompanyProfileDocument;
 use App\Models\PostgreSQL\JobPosting;
 use App\Repositories\MongoDB\SwipeHistoryRepository;
 use App\Repositories\Redis\SwipeCacheRepository;
@@ -17,6 +18,7 @@ class DeckService
         private SwipeCacheRepository $cache,
         private SwipeHistoryRepository $swipeHistory,
         private TrustScoreService $trustScore,
+        private FileUploadService $fileUploads,
     ) {}
 
     /**
@@ -55,8 +57,14 @@ class DeckService
         $hasMore = $candidatePool->count() > $perPage;
         $jobs = $candidatePool->take($perPage)->values();
 
-        // 4. Calculate relevance score for each job
-        $scoredJobs = $jobs->map(function ($job) use ($applicantSkills, $applicantCity) {
+        // 4. Hydrate company data from MongoDB (logo_url, office_images)
+        $companyIds = $jobs->pluck('company_id')->unique()->values()->toArray();
+        $companyDocs = CompanyProfileDocument::whereIn('company_id', $companyIds)
+            ->get()
+            ->keyBy('company_id');
+
+        // 5. Calculate relevance score for each job
+        $scoredJobs = $jobs->map(function ($job) use ($applicantSkills, $applicantCity, $companyDocs) {
             $skillScore = $this->calculateSkillMatch($job, $applicantSkills);
             $recencyScore = $this->calculateRecencyScore($job);
             $locationBonus = $this->calculateLocationBonus($job, $applicantCity);
@@ -67,10 +75,23 @@ class DeckService
             $baseScore = ($skillScore * 0.7) + ($recencyScore * 0.3) + $locationBonus + $remoteBonus;
             $job->relevance_score = $baseScore * $visibilityMultiplier;
 
+            // City-level distance estimation (no geocoordinates available)
+            $job->distance_km = $this->estimateCityDistance($job, $applicantCity);
+
+            // Hydrate company with MongoDB assets (logo, office images)
+            $doc = $companyDocs->get($job->company_id);
+            if ($doc && $job->company) {
+                $job->company->logo_url = $this->toSignedUrl($doc->logo_url);
+                $job->company->office_images = array_map(
+                    fn ($url) => $this->toSignedUrl($url),
+                    $doc->office_images ?? []
+                );
+            }
+
             return $job;
         });
 
-        // 5. Sort this page by relevance for presentation
+        // 6. Sort this page by relevance for presentation
         $sortedJobs = $scoredJobs
             ->sortByDesc('relevance_score')
             ->values();
@@ -152,6 +173,51 @@ class DeckService
         }
 
         return strtolower($job->location_city) === strtolower($applicantCity) ? 0.1 : 0.0;
+    }
+
+    /**
+     * Estimate distance based on city/region matching.
+     * Returns a rough estimate since we lack lat/lng coordinates.
+     */
+    private function estimateCityDistance(JobPosting $job, ?string $applicantCity): float
+    {
+        if ($job->work_type === 'remote') {
+            return 0.0;
+        }
+
+        if (! $applicantCity || ! $job->location_city) {
+            return -1.0; // -1 signals "unknown" to the frontend
+        }
+
+        if (strtolower($job->location_city) === strtolower($applicantCity)) {
+            return 0.0; // Same city
+        }
+
+        // Same region = nearby estimate
+        if ($job->location_region) {
+            return 25.0; // Different city but we have region info
+        }
+
+        return -1.0; // Different city, unknown distance
+    }
+
+    /**
+     * Convert a raw R2 file URL to a pre-signed read URL.
+     * Returns the original URL on failure (non-R2 URLs, missing config, etc.)
+     */
+    private function toSignedUrl(?string $url): ?string
+    {
+        if (! $url || $url === '') {
+            return null;
+        }
+
+        try {
+            $result = $this->fileUploads->generatePresignedReadUrl($url);
+
+            return $result['read_url'] ?? $url;
+        } catch (\Throwable) {
+            return $url;
+        }
     }
 
     /**

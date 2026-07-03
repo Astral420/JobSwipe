@@ -46,9 +46,9 @@ const SWIPE_THRESHOLD = SW * 0.20;
 const ACTIONS_BOTTOM = Platform.OS === 'ios' ? 72 : 100;
 const ACTIONS_HEIGHT = 80;
 const OVERLAY_BOTTOM = ACTIONS_BOTTOM + ACTIONS_HEIGHT + 8;  // company info strip
-const BADGE_BOTTOM   = OVERLAY_BOTTOM + 92;                  // match badge sits here
-const PANEL_HEIGHT   = SH * 0.62;
-const BOTTOM_NAV     = Platform.OS === 'ios' ? 84 : 64;      // tab bar clearance
+const BADGE_BOTTOM = OVERLAY_BOTTOM + 92;                  // match badge sits here
+const PANEL_HEIGHT = SH * 0.62;
+const BOTTOM_NAV = Platform.OS === 'ios' ? 84 : 64;      // tab bar clearance
 
 // ── API deck types ──────────────────────────────────────────────────────────
 type DeckJob = {
@@ -80,6 +80,11 @@ type ApiDeckJob = Partial<DeckJob> & {
   id: number | string;
   title?: string;
   work_type?: string;
+  employment_type?: 'full_time' | 'part_time' | 'contract' | 'internship';
+  salary_period?: 'monthly' | 'yearly';
+  salary_min?: number | null;
+  salary_max?: number | null;
+  salary_is_hidden?: boolean;
   company?: {
     name?: string;
     company_name?: string;
@@ -534,34 +539,34 @@ export default function HomeTab() {
   const { top: topInset } = useSafeAreaInsets();
   const navigation = useNavigation();
   // Dynamic bottom positions — keep buttons above tab bar on all devices
-  const actionsBottom  = tabBarHeight + 20;
-  const overlayBottom  = actionsBottom + ACTIONS_HEIGHT + 8;
-  const badgeBottom    = overlayBottom + 92;
+  const actionsBottom = tabBarHeight + 20;
+  const overlayBottom = actionsBottom + ACTIONS_HEIGHT + 8;
+  const badgeBottom = overlayBottom + 92;
 
   const MAX_SWIPES = 15;
-  const [deckJobs, setDeckJobs]     = useState<DeckJob[]>([]);
+  const [deckJobs, setDeckJobs] = useState<DeckJob[]>([]);
   const [deckLoading, setDeckLoading] = useState(true);
   const [swipesUsed, setSwipesUsed] = useState(0);
   const [swipeLimit, setSwipeLimit] = useState(MAX_SWIPES);
-  const [index, setIndex]           = useState(0);
+  const [index, setIndex] = useState(0);
   const indexRef = useRef(0);  // always reflects latest index for use inside closures
   const growingJobRef = useRef<DeckJob | null>(null);
   const [photoIndex, setPhotoIndex] = useState(0);
-  const [timerKey, setTimerKey]     = useState(0);
-  const [liked, setLiked]           = useState<string[]>([]);
-  const [expanded, setExpanded]     = useState(false);
-  const [history, setHistory]       = useState<{ id: string; dir: number }[]>([]);
-  const [cardSize, setCardSize]     = useState({ width: SW, height: SH });
+  const [timerKey, setTimerKey] = useState(0);
+  const [liked, setLiked] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const [history, setHistory] = useState<{ id: string; dir: number }[]>([]);
+  const [cardSize, setCardSize] = useState({ width: SW, height: SH });
   const [topBarHeight, setTopBarHeight] = useState(0);
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [galleryFullscreen, setGalleryFullscreen] = useState(false);
 
   // ── Settings state ───────────────────────────────────────────────────────────
-  const [settingsOpen, setSettingsOpen]   = useState(false);
-  const [useKm, setUseKm]                 = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [useKm, setUseKm] = useState(true);
   const [maxDistanceKm, setMaxDistanceKm] = useState(50);       // applied value
   const [draftDistance, setDraftDistance] = useState(50);       // in-panel draft
-  const [draftUseKm, setDraftUseKm]       = useState(true);     // in-panel draft
+  const [draftUseKm, setDraftUseKm] = useState(true);     // in-panel draft
   const [sliderTrackWidth, setSliderTrackWidth] = useState(SW - 40);
   const sliderWrapperX = useRef(0);  // page-level x offset of the slider wrapper
   const settingsAnim = useRef(new Animated.Value(0)).current;
@@ -596,8 +601,8 @@ export default function HomeTab() {
           .filter((uri): uri is string => Boolean(uri))
           .map((uri) => ({ uri }));
         const tagList = j.tags ?? [
-          { label: (j.work_type ?? 'Flexible').toString().replace(/^./, (c) => c.toUpperCase()), variant: 'primary' as const },
-          { label: 'Full-time', variant: 'success' as const },
+          { label: j.work_type === 'on_site' ? 'On-site' : (j.work_type ?? 'Flexible').toString().replace(/^./, (c) => c.toUpperCase()), variant: 'primary' as const },
+          { label: ({ full_time: 'Full-time', part_time: 'Part-time', contract: 'Contract', internship: 'Internship' } as Record<string, string>)[j.employment_type ?? 'full_time'] ?? 'Full-time', variant: 'success' as const },
           { label: 'Active', variant: 'neutral' as const },
         ];
         const derivedRequirements = j.requirements
@@ -606,6 +611,17 @@ export default function HomeTab() {
         const matchScore = j.match_percent
           ?? (typeof j.relevance_score === 'number' ? Math.max(1, Math.min(99, Math.round(j.relevance_score * 100))) : 75);
         const distance = j.distance_km ?? 0;
+
+        // Build salary display from backend fields
+        let salaryDisplay = 'Compensation discussed in interview';
+        if (!j.salary_is_hidden && (j.salary_min || j.salary_max)) {
+          const fmtMin = j.salary_min ? `₱${Number(j.salary_min).toLocaleString()}` : null;
+          const fmtMax = j.salary_max ? `₱${Number(j.salary_max).toLocaleString()}` : null;
+          const periodLabel = j.salary_period === 'yearly' ? 'yr' : 'mo';
+          if (fmtMin && fmtMax) salaryDisplay = `${fmtMin} - ${fmtMax} / ${periodLabel}`;
+          else if (fmtMin) salaryDisplay = `${fmtMin}+ / ${periodLabel}`;
+          else if (fmtMax) salaryDisplay = `Up to ${fmtMax} / ${periodLabel}`;
+        }
 
         return {
           ...j,
@@ -616,7 +632,7 @@ export default function HomeTab() {
             abbr: companyAbbr || 'CO',
           },
           role: j.role ?? j.title ?? 'Open Role',
-          salary_range: j.salary_range ?? 'Compensation discussed in interview',
+          salary_range: salaryDisplay,
           location: j.location ?? 'Location not specified',
           tags: tagList,
           match_percent: matchScore,
@@ -626,7 +642,7 @@ export default function HomeTab() {
           company_photos: sourcePhotos,
           reviews: j.reviews ?? [],
           position: j.role ?? j.title ?? 'Open Role',
-          salary: j.salary_range ?? 'Compensation discussed in interview',
+          salary: salaryDisplay,
           description: j.about_role ?? j.description ?? 'No role summary provided yet.',
           lookingFor: derivedRequirements || 'General professional experience',
           distanceKm: distance,
@@ -660,8 +676,10 @@ export default function HomeTab() {
 
   // km ↔ miles display helper
   const formatDistance = (km: number) => {
-    if (useKm) return `${km.toFixed(1)} km away`;
-    return `${(km * 0.621371).toFixed(1)} mi away`;
+    if (km < 0) return 'Distance unavailable';
+    if (km === 0) return 'Same city';
+    if (useKm) return `~${km.toFixed(0)} km away`;
+    return `~${(km * 0.621371).toFixed(0)} mi away`;
   };
 
   // Label shown in the panel header uses the draft value
@@ -674,19 +692,19 @@ export default function HomeTab() {
   const filteredJobsRef = useRef(filteredJobs);
   filteredJobsRef.current = filteredJobs; // always up to date, safe inside stale closures
 
-  const position      = useRef(new Animated.ValueXY()).current;
-  const cardOpacity   = useRef(new Animated.Value(1)).current;
-  const expandAnim    = useRef(new Animated.Value(0)).current;
+  const position = useRef(new Animated.ValueXY()).current;
+  const cardOpacity = useRef(new Animated.Value(1)).current;
+  const expandAnim = useRef(new Animated.Value(0)).current;
   // 0 = next card at rest scale/dim (0.93, dark overlay), 1 = full size/undimmed
-  const nextCardAnim  = useRef(new Animated.Value(0)).current;
+  const nextCardAnim = useRef(new Animated.Value(0)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
   const photoScrollRef = useRef<ScrollView>(null);
 
   // ── Timer pause/resume tracking ──────────────────────────────────────────────
-  const TIMER_DURATION   = 5000;
-  const isDraggingRef    = useRef(false);
+  const TIMER_DURATION = 5000;
+  const isDraggingRef = useRef(false);
   const pausedElapsedRef = useRef(0);
-  const dragStartRef     = useRef(0);
+  const dragStartRef = useRef(0);
 
   // Auto-cycle photos every 5 seconds — pauses while card is being dragged
   useEffect(() => {
@@ -694,7 +712,7 @@ export default function HomeTab() {
     if (total <= 1) return;
 
     let accumulatedMs = pausedElapsedRef.current;
-    let lastTick      = Date.now();
+    let lastTick = Date.now();
 
     // Drive progressAnim directly from accumulatedMs every tick.
     // This way pausing is just "stop incrementing" — no Animated.timing involved,
@@ -715,7 +733,7 @@ export default function HomeTab() {
         progressAnim.setValue(0);
         setPhotoIndex(p => {
           const isLast = p === total - 1;
-          const next   = isLast ? 0 : p + 1;
+          const next = isLast ? 0 : p + 1;
           if (isLast) {
             photoScrollRef.current?.scrollTo({ x: total * cardSize.width, animated: true });
             setTimeout(() => photoScrollRef.current?.scrollTo({ x: 0, animated: false }), 400);
@@ -736,27 +754,28 @@ export default function HomeTab() {
     if (width > 0 && height > 0) setCardSize({ width, height });
   };
 
-  const likeOpacity        = position.x.interpolate({ inputRange: [0, 80],              outputRange: [0, 1],       extrapolate: 'clamp' });
-  const nopeOpacity        = position.x.interpolate({ inputRange: [-80, 0],             outputRange: [1, 0],       extrapolate: 'clamp' });
-  const rotate             = position.x.interpolate({ inputRange: [-SW, 0, SW],         outputRange: ['-28deg', '0deg', '28deg'] });
-  const likeOverlayOpacity = position.x.interpolate({ inputRange: [0, SWIPE_THRESHOLD], outputRange: [0, 0.45],    extrapolate: 'clamp' });
-  const nopeOverlayOpacity = position.x.interpolate({ inputRange: [-SWIPE_THRESHOLD, 0],outputRange: [0.45, 0],    extrapolate: 'clamp' });
+  const likeOpacity = position.x.interpolate({ inputRange: [0, 80], outputRange: [0, 1], extrapolate: 'clamp' });
+  const nopeOpacity = position.x.interpolate({ inputRange: [-80, 0], outputRange: [1, 0], extrapolate: 'clamp' });
+  const rotate = position.x.interpolate({ inputRange: [-SW, 0, SW], outputRange: ['-28deg', '0deg', '28deg'] });
+  const likeOverlayOpacity = position.x.interpolate({ inputRange: [0, SWIPE_THRESHOLD], outputRange: [0, 0.45], extrapolate: 'clamp' });
+  const nopeOverlayOpacity = position.x.interpolate({ inputRange: [-SWIPE_THRESHOLD, 0], outputRange: [0.45, 0], extrapolate: 'clamp' });
   // Used for the post-swipe settle animation on the next card
   // Back card starts small and dim, grows to full size as it becomes the new front card
-  const nextCardSettleScale         = nextCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] });
-  const nextCardSettleOverlay       = nextCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.70, 0] });
-  const nextCardSettleImageOpacity  = nextCardAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0.7, 1] });
-  const panelTranslateY    = expandAnim.interpolate({ inputRange: [0, 1],               outputRange: [PANEL_HEIGHT, 0] });
+  const nextCardSettleScale = nextCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] });
+  const nextCardSettleOverlay = nextCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.70, 0] });
+  const nextCardSettleImageOpacity = nextCardAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0.7, 1] });
+  const panelTranslateY = expandAnim.interpolate({ inputRange: [0, 1], outputRange: [PANEL_HEIGHT, 0] });
 
   const settingsOpenRef = useRef(false);
-  const expandedRef     = useRef(false);
-  const isHoldingRef    = useRef(false);
+  const expandedRef = useRef(false);
+  const isHoldingRef = useRef(false);
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: (_e, { dx, dy }) => !expandedRef.current && !settingsOpenRef.current && Math.abs(dx) > Math.abs(dy),
-      onMoveShouldSetPanResponder:  (_e, { dx, dy }) => !expandedRef.current && !settingsOpenRef.current && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 5,
+      onMoveShouldSetPanResponder: (_e, { dx, dy }) => !expandedRef.current && !settingsOpenRef.current && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 5,
       onPanResponderGrant: () => {
-        isDraggingRef.current = true;},
+        isDraggingRef.current = true;
+      },
       onPanResponderMove: (_e, { dx, dy }) => {
         isDraggingRef.current = true;
         position.setValue({ x: dx * 1.08, y: dy * 0.45 });
@@ -789,7 +808,7 @@ export default function HomeTab() {
       if (currentJob) {
         // Fire-and-forget swipe action
         const endpoint = dir > 0 ? `/applicant/swipe/right/${currentJob.id}` : `/applicant/swipe/left/${currentJob.id}`;
-        api.post(endpoint, {}).catch(() => {});
+        api.post(endpoint, {}).catch(() => { });
       }
       if (currentJob && dir > 0) setLiked(prev => [...prev, currentJob.id]);
       if (currentJob) setHistory(prev => [...prev, { id: currentJob.id, dir }]);
@@ -852,7 +871,7 @@ export default function HomeTab() {
   // };
   const handleImageTap = (evt: any) => {
     if (expanded) return;
-    const x     = evt.nativeEvent.locationX;
+    const x = evt.nativeEvent.locationX;
     const total = filteredJobs[index].photos.length;
     if (x < SW * 0.35 || x > SW * 0.65) {
       setPhotoIndex(p => {
@@ -1010,7 +1029,7 @@ export default function HomeTab() {
     );
   }
 
-  const job     = filteredJobs[index];
+  const job = filteredJobs[index];
   // During the grow animation use the snapshot; otherwise show the real next card
   const nextJob = growingJobRef.current ?? filteredJobs[index + 1];
 
@@ -1462,7 +1481,7 @@ export default function HomeTab() {
 const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#000' },
 
-  
+
   stampWrap: { position: 'absolute', top: 90, zIndex: 20 },
 
   topBar: {
@@ -1482,29 +1501,29 @@ const s = StyleSheet.create({
     borderRadius: Radii.full, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
     padding: 3, gap: 2,
   },
-  tabPill:       { paddingHorizontal: Spacing['4'], paddingVertical: 7, borderRadius: Radii.full },
+  tabPill: { paddingHorizontal: Spacing['4'], paddingVertical: 7, borderRadius: Radii.full },
   tabPillActive: { backgroundColor: Colors.white },
-  tabText:       { fontSize: Typography.base, fontWeight: Typography.medium, color: 'rgba(255,255,255,0.7)' },
-  tabTextActive: { fontSize: Typography.base, fontWeight: Typography.bold,   color: Colors.gray900 },
+  tabText: { fontSize: Typography.base, fontWeight: Typography.medium, color: 'rgba(255,255,255,0.7)' },
+  tabTextActive: { fontSize: Typography.base, fontWeight: Typography.bold, color: Colors.gray900 },
 
-  dotsRow:  { flexDirection: 'row', gap: 5, paddingHorizontal: Spacing['1'] },
-  dot:      { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)', overflow: 'hidden' },
-  dotActive:{ backgroundColor: Colors.white },
-  dotFill:  { height: '100%', borderRadius: 2, backgroundColor: Colors.white },
+  dotsRow: { flexDirection: 'row', gap: 5, paddingHorizontal: Spacing['1'] },
+  dot: { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)', overflow: 'hidden' },
+  dotActive: { backgroundColor: Colors.white },
+  dotFill: { height: '100%', borderRadius: 2, backgroundColor: Colors.white },
 
   cardInfoGroup: {
     position: 'absolute', left: 0, right: 0,
     zIndex: 10,
   },
   bottomOverlay: { paddingHorizontal: Spacing['5'], marginBottom: Spacing['3'] },
-  nameRow:       { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 4 },
+  nameRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 4 },
   companyNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   companyName: {
     fontSize: 34, fontWeight: Typography.bold, color: Colors.white, letterSpacing: -0.5,
     textShadowColor: 'rgba(0,0,0,0.85)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 10,
   },
   verifiedIcon: { marginTop: 2 },
-  verifiedRow:  { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
+  verifiedRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 3 },
   salaryInline: {
     fontSize: Typography.md, fontWeight: Typography.semibold, color: 'rgba(255,255,255,0.95)',
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6,
@@ -1514,7 +1533,7 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.18)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
     alignItems: 'center', justifyContent: 'center', marginBottom: 4,
   },
-  lookingRow:   { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: Spacing['3'], marginBottom: 3 },
+  lookingRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: Spacing['3'], marginBottom: 3 },
   lookingLabel: {
     fontSize: Typography.base, color: 'rgba(255,255,255,0.9)', fontWeight: Typography.medium,
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6,
@@ -1537,8 +1556,8 @@ const s = StyleSheet.create({
     shadowColor: '#EF4444', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 10, elevation: 8,
     alignItems: 'center', justifyContent: 'center',
   },
-  btnSm:   {},
-  btnHeart:{ width: 70, height: 70, backgroundColor: Colors.success, borderRadius: Radii.full, ...Shadows.colored(Colors.success) },
+  btnSm: {},
+  btnHeart: { width: 70, height: 70, backgroundColor: Colors.success, borderRadius: Radii.full, ...Shadows.colored(Colors.success) },
 
   // Expand panel
   expandPanel: {
@@ -1561,10 +1580,10 @@ const s = StyleSheet.create({
   },
   expandContent: { paddingHorizontal: Spacing['5'], paddingTop: Spacing['3'] },
 
-  exRole:        { fontSize: Typography['2xl'], fontWeight: Typography.bold,    color: Colors.white,             marginBottom: 4 },
-  exSalary:      { fontSize: Typography.lg,    fontWeight: Typography.semibold, color: '#818CF8',                marginBottom: Spacing['2'] },
-  exDistanceRow: { flexDirection: 'row', alignItems: 'center', gap: 4,          marginBottom: Spacing['3'] },
-  exDistance:    { fontSize: Typography.base,  color: 'rgba(255,255,255,0.5)' },
+  exRole: { fontSize: Typography['2xl'], fontWeight: Typography.bold, color: Colors.white, marginBottom: 4 },
+  exSalary: { fontSize: Typography.lg, fontWeight: Typography.semibold, color: '#818CF8', marginBottom: Spacing['2'] },
+  exDistanceRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: Spacing['3'] },
+  exDistance: { fontSize: Typography.base, color: 'rgba(255,255,255,0.5)' },
 
   // Always-visible distance on card
   cardDistanceRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 5 },
@@ -1572,21 +1591,21 @@ const s = StyleSheet.create({
     fontSize: Typography.sm, color: 'rgba(255,255,255,0.7)',
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
   },
-  exLocRow:      { flexDirection: 'row', alignItems: 'center', gap: 4,          marginBottom: Spacing['3'] },
-  exLoc:         { fontSize: Typography.base,  color: 'rgba(255,255,255,0.6)' },
-  exTags:        { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing['2'],   marginBottom: Spacing['4'] },
-  exDivider:     { height: 1, backgroundColor: 'rgba(255,255,255,0.1)',          marginBottom: Spacing['3'], marginTop: Spacing['1'] },
-  exSectionTitle:{ fontSize: Typography.sm,    fontWeight: Typography.semibold, color: 'rgba(255,255,255,0.4)', marginBottom: Spacing['2'], textTransform: 'uppercase', letterSpacing: 1 },
-  exDesc:        { fontSize: Typography.md,    color: 'rgba(255,255,255,0.78)', lineHeight: Typography.md * 1.65, marginBottom: Spacing['2'] },
-  exMetaRow:     { flexDirection: 'row', alignItems: 'center', gap: 6,          marginBottom: Spacing['2'] },
-  exMeta:        { fontSize: Typography.md,    color: 'rgba(255,255,255,0.7)' },
+  exLocRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: Spacing['3'] },
+  exLoc: { fontSize: Typography.base, color: 'rgba(255,255,255,0.6)' },
+  exTags: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing['2'], marginBottom: Spacing['4'] },
+  exDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginBottom: Spacing['3'], marginTop: Spacing['1'] },
+  exSectionTitle: { fontSize: Typography.sm, fontWeight: Typography.semibold, color: 'rgba(255,255,255,0.4)', marginBottom: Spacing['2'], textTransform: 'uppercase', letterSpacing: 1 },
+  exDesc: { fontSize: Typography.md, color: 'rgba(255,255,255,0.78)', lineHeight: Typography.md * 1.65, marginBottom: Spacing['2'] },
+  exMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: Spacing['2'] },
+  exMeta: { fontSize: Typography.md, color: 'rgba(255,255,255,0.7)' },
 
   // Gallery
   galleryMain: {
     borderRadius: Radii.lg, overflow: 'hidden',
     height: 180, marginBottom: Spacing['3'], position: 'relative',
   },
-  galleryMainImg:     { width: '100%', height: '100%' },
+  galleryMainImg: { width: '100%', height: '100%' },
   galleryMainOverlay: {
     position: 'absolute', top: 10, right: 10,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -1596,15 +1615,15 @@ const s = StyleSheet.create({
     position: 'absolute', bottom: 10, alignSelf: 'center',
     flexDirection: 'row', gap: 5, left: 0, right: 0, justifyContent: 'center',
   },
-  galleryDot:       { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },
+  galleryDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.4)' },
   galleryDotActive: { backgroundColor: Colors.white, width: 18 },
-  galleryStrip:     { marginBottom: Spacing['2'] },
+  galleryStrip: { marginBottom: Spacing['2'] },
   galleryThumb: {
     width: 72, height: 56, borderRadius: Radii.md, overflow: 'hidden',
     borderWidth: 2, borderColor: 'transparent',
   },
   galleryThumbActive: { borderColor: Colors.primary },
-  galleryThumbImg:    { width: '100%', height: '100%' },
+  galleryThumbImg: { width: '100%', height: '100%' },
   galleryThumbOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(99,102,241,0.18)',
@@ -1616,7 +1635,7 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.96)', zIndex: 100,
     alignItems: 'center', justifyContent: 'center',
   },
-  lightboxImg:   { width: SW, height: SH * 0.7 },
+  lightboxImg: { width: SW, height: SH * 0.7 },
   lightboxClose: {
     position: 'absolute', top: 52, right: Spacing['5'],
     backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: Radii.full, padding: 8, zIndex: 101,
@@ -1625,19 +1644,19 @@ const s = StyleSheet.create({
     position: 'absolute', top: '50%', marginTop: -24,
     backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: Radii.full, padding: 8,
   },
-  lightboxArrowLeft:  { left: Spacing['4'] },
+  lightboxArrowLeft: { left: Spacing['4'] },
   lightboxArrowRight: { right: Spacing['4'] },
   lightboxCounter: {
     position: 'absolute', bottom: 60,
     fontSize: Typography.md, color: 'rgba(255,255,255,0.6)', fontWeight: Typography.medium,
   },
 
-  emptyScreen:   { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.background, padding: Spacing['8'] },
+  emptyScreen: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.background, padding: Spacing['8'] },
   emptyIconWrap: { width: 80, height: 80, borderRadius: Radii.full, backgroundColor: Colors.primaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing['5'] },
-  emptyTitle:    { fontSize: Typography['2xl'], fontWeight: Typography.bold, color: Colors.gray900, marginBottom: Spacing['2'], textAlign: 'center' },
-  emptySub:      { fontSize: Typography.md, color: Colors.gray500, textAlign: 'center', lineHeight: 22, marginBottom: Spacing['6'] },
-  refreshBtn:    { backgroundColor: Colors.primary, paddingHorizontal: Spacing['8'], paddingVertical: Spacing['3'] + 1, borderRadius: Radii.lg },
-  refreshBtnText:{ fontSize: Typography.md, fontWeight: Typography.semibold, color: Colors.white },
+  emptyTitle: { fontSize: Typography['2xl'], fontWeight: Typography.bold, color: Colors.gray900, marginBottom: Spacing['2'], textAlign: 'center' },
+  emptySub: { fontSize: Typography.md, color: Colors.gray500, textAlign: 'center', lineHeight: 22, marginBottom: Spacing['6'] },
+  refreshBtn: { backgroundColor: Colors.primary, paddingHorizontal: Spacing['8'], paddingVertical: Spacing['3'] + 1, borderRadius: Radii.lg },
+  refreshBtnText: { fontSize: Typography.md, fontWeight: Typography.semibold, color: Colors.white },
 
   // Settings panel
   settingsBackdrop: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, zIndex: 65, backgroundColor: 'rgba(0,0,0,0.5)' },

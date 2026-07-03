@@ -74,7 +74,7 @@ const mapJobToDisplay = (job: Job, index: number): JobPost => {
     icon,
     color: JOB_COLORS[index % JOB_COLORS.length],
     applicants: job.applicants_count || 0,
-    status: job.status === 'closed' ? 'paused' : job.status,
+    status: job.status === 'active' ? 'open' : 'paused',
     location: job.location,
     location_region: job.location_region,
   };
@@ -162,7 +162,7 @@ export default function JobPostingsScreen() {
               if (action === 'pause') {
                 await jobService.close(id);
               } else {
-                await jobService.restore(id);
+                await jobService.reopen(id);
               }
             } catch (err: any) {
               console.error(`Failed to ${action} job:`, err);

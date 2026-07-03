@@ -64,7 +64,7 @@ export interface VerificationDocument {
 
 // Job types
 export type JobStatus = 'active' | 'closed' | 'paused' | 'flagged' | 'deleted';
-export type JobType = 'full_time' | 'part_time' | 'contract' | 'internship' | 'freelance';
+export type JobType = 'full_time' | 'part_time' | 'contract' | 'internship';
 export type JobLocationType = 'remote' | 'onsite' | 'hybrid';
 
 export interface JobPosting {

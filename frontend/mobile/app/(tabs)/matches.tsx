@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { api } from '../../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -24,6 +24,7 @@ import { CompanyLogo, CountBadge, Radii, Spacing, StatusPill } from '../../compo
 import { useTheme } from '../../theme';
 import { useTabBarHeight } from '../../hooks/useTabBarHeight';
 import { useAuthStore } from '../../store/authStore';
+import { useMatchChannel, type IncomingMessage } from '../../hooks/useMatchChannel';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -60,10 +61,12 @@ type Conversation = {
 };
 
 type ChatMessage = {
-  id: number;
+  id: string | number;
   from: 'me' | 'them';
   text: string;
   time: string;
+  read?: boolean;
+  sending?: boolean;
 };
 
 type Review = {
@@ -277,7 +280,7 @@ function MatchCarousel({
                     {expired ? 'Expired' : formatRingValue(timeLeft)}
                   </Text>
                 </TouchableOpacity>
-                
+
                 {/* Subtle decline button */}
                 <TouchableOpacity
                   style={styles.declineBtn}
@@ -317,16 +320,16 @@ function MessagesList({
   if (conversations.length === 0) {
     return (
       <View style={styles.emptyState}>
-        <MaterialCommunityIcons 
-          name={hasMatches ? "message-text-outline" : "briefcase-search-outline"} 
-          size={48} 
-          color="rgba(124,58,237,0.24)" 
+        <MaterialCommunityIcons
+          name={hasMatches ? "message-text-outline" : "briefcase-search-outline"}
+          size={48}
+          color="rgba(124,58,237,0.24)"
         />
         <Text style={styles.emptyTitle}>
           {hasMatches ? 'No conversations yet' : 'No matches yet'}
         </Text>
         <Text style={styles.emptyCopy}>
-          {hasMatches 
+          {hasMatches
             ? 'Open a match above to start chatting and build your connection.'
             : 'Start swiping to discover opportunities that match your profile!'}
         </Text>
@@ -428,7 +431,10 @@ function ConversationScreen({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingEmitRef = useRef<number>(0);
 
   const fallbackCompany = company ?? (conversation ? {
     id: conversation.companyId,
@@ -449,22 +455,102 @@ function ConversationScreen({
   const isReadOnlyConversation = isClosedConversation || isExpiredConversation;
   const canChat = !isExpiredMatch && !isReadOnlyConversation && !!fallbackCompany;
 
-  useEffect(() => {
+  // ── Initial message load ────────────────────────────────────────────────────
+  const fetchMessages = useCallback(async () => {
     const targetId = fallbackCompany?.id;
     if (!targetId) { setMessages([]); return; }
-    api.get(`/matches/${targetId}/messages`)
-      .then((msgs: any) => {
-        const payload = Array.isArray(msgs) ? msgs : (Array.isArray(msgs?.data) ? msgs.data : []);
-        const items = payload.map((m: any) => ({
-          id: m.id,
-          from: m.sender?.role === authRole ? 'me' as const : 'them' as const,
-          text: m.body ?? '',
-          time: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-        }));
-        setMessages(items);
-      })
-      .catch(() => setMessages([]));
+    try {
+      const msgs: any = await api.get(`/matches/${targetId}/messages`);
+      const payload = Array.isArray(msgs) ? msgs : (Array.isArray(msgs?.data) ? msgs.data : []);
+      const items: ChatMessage[] = payload.map((m: any) => ({
+        id: m.id,
+        from: m.sender?.role === authRole ? 'me' as const : 'them' as const,
+        text: m.body ?? '',
+        time: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+        read: !!m.read_at,
+      }));
+      setMessages(items.reverse());
+    } catch {
+      setMessages([]);
+    }
   }, [fallbackCompany?.id, authRole]);
+
+  // ── Mark messages as read ────────────────────────────────────────────────────
+  const markAsRead = useCallback(async () => {
+    if (!fallbackCompany?.id) return;
+    try {
+      await api.patch(`/matches/${fallbackCompany.id}/messages/read`, {});
+    } catch { /* silent */ }
+  }, [fallbackCompany?.id]);
+
+  // ── Real-time: subscribe to match channel ───────────────────────────────────
+  useMatchChannel(fallbackCompany?.id, {
+    onMessage: (data: IncomingMessage) => {
+      console.log('🔥 onMessage callback fired in ConversationScreen', {
+        data,
+        authRole,
+        currentMessagesCount: messages.length,
+      });
+
+      const isMe = data.sender_role === authRole;
+      const newMsg: ChatMessage = {
+        id: data.id,
+        from: isMe ? 'me' : 'them',
+        text: data.body,
+        time: new Date(data.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: !!data.read_at,
+      };
+
+      console.log('📝 New message object created:', newMsg);
+
+      setMessages((prev) => {
+        console.log('📊 Current messages before update:', prev.length);
+        const exists = prev.some((m) => m.id === data.id);
+        console.log('❓ Message already exists?', exists);
+
+        if (exists) return prev;
+
+        const without = isMe
+          ? prev.filter((m) => !(m.sending && m.text === data.body))
+          : prev;
+
+        const updated = [...without, newMsg];
+        console.log('✅ Updated messages:', updated.length, 'New message added:', newMsg.text.substring(0, 20));
+        return updated;
+      });
+
+      if (!isMe) markAsRead();
+    },
+    onTyping: () => {
+      console.log('⌨️ onTyping callback fired');
+      setIsTyping(true);
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = setTimeout(() => setIsTyping(false), 3000);
+    },
+    onReadReceipt: () => {
+      setMessages((prev) =>
+        prev.map((m) => (m.from === 'me' ? { ...m, read: true } : m))
+      );
+    },
+  });
+
+  useEffect(() => {
+    fetchMessages();
+    markAsRead();
+
+    // Poll every 4 s as a reliable fallback for WebSocket delivery.
+    // WS stays active — if it fires the message appears instantly;
+    // the poll guarantees it shows up even when WS events are dropped.
+    const pollInterval = setInterval(() => {
+      fetchMessages();
+      markAsRead();
+    }, 4000);
+
+    return () => {
+      if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+      clearInterval(pollInterval);
+    };
+  }, [fetchMessages, markAsRead]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -508,13 +594,23 @@ function ConversationScreen({
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
   };
 
+  // Debounced typing indicator — fires at most once every 2 seconds
+  const emitTyping = useCallback(() => {
+    if (!fallbackCompany?.id || !canChat) return;
+    const now = Date.now();
+    if (now - lastTypingEmitRef.current < 2000) return;
+    lastTypingEmitRef.current = now;
+    api.post(`/matches/${fallbackCompany.id}/messages/typing`, {}).catch(() => { });
+  }, [fallbackCompany?.id, canChat]);
+
   const sendMessage = async () => {
     if (!fallbackCompany) return;
     const text = draft.trim();
     if (!text || !canChat) return;
 
     const sentAt = formatConversationTime();
-    const tempMsg: ChatMessage = { id: Date.now(), from: 'me', text, time: sentAt };
+    const tempId = Date.now();
+    const tempMsg: ChatMessage = { id: tempId, from: 'me', text, time: sentAt, sending: true };
     setMessages((prev) => [...prev, tempMsg]);
     setDraft('');
     scrollToBottom();
@@ -523,7 +619,6 @@ function ConversationScreen({
       // If this is a pending match and the first message, accept the match first
       if (isPendingMatch && messages.length === 0) {
         await api.post(`/applicant/matches/${fallbackCompany.id}/accept`, {});
-        // Update local state to reflect accepted match
         onSendFirstMessage(fallbackCompany.id, text, sentAt);
       } else {
         onSendFirstMessage(fallbackCompany.id, text, sentAt);
@@ -531,9 +626,17 @@ function ConversationScreen({
 
       // Persist message to backend
       await api.post(`/matches/${fallbackCompany.id}/messages`, { body: text });
+      // Fallback re-fetch if WS doesn't deliver within 3s
+      setTimeout(() => {
+        setMessages((prev) => {
+          const stillPending = prev.some((m) => m.sending && m.text === text);
+          if (stillPending) fetchMessages();
+          return prev;
+        });
+      }, 3000);
     } catch (err) {
       console.error('Failed to send message or accept match:', err);
-      // Optionally show error to user, but message is already in UI
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
     }
   };
 
@@ -565,7 +668,10 @@ function ConversationScreen({
 
         <View style={styles.chatHeaderInfo}>
           <Text style={styles.chatHeaderCompany}>{fallbackCompany.company}</Text>
-          <Text style={styles.chatHeaderRole}>{fallbackCompany.role}</Text>
+          {isTyping
+            ? <Text style={[styles.chatHeaderRole, { color: T.primary, fontStyle: 'italic' }]}>typing...</Text>
+            : <Text style={styles.chatHeaderRole}>{fallbackCompany.role}</Text>
+          }
         </View>
       </View>
 
@@ -614,14 +720,19 @@ function ConversationScreen({
                 <View
                   style={[
                     styles.bubble,
-                    isMe ? [styles.bubbleMe, { backgroundColor: T.primary }] : styles.bubbleThem,
+                    isMe ? [styles.bubbleMe, { backgroundColor: message.sending ? `${T.primary}aa` : T.primary }] : styles.bubbleThem,
                   ]}
                 >
                   <Text style={[styles.bubbleText, { color: isMe ? '#fff' : '#1f1838' }]}>{message.text}</Text>
                 </View>
                 {isLast ? (
                   <Text style={[styles.bubbleTime, isMe ? styles.bubbleTimeMe : styles.bubbleTimeThem]}>
-                    {message.time}
+                    {message.time}{message.sending ? ' · Sending…' : ''}
+                  </Text>
+                ) : null}
+                {isMe && isLast && message.read && index === messages.length - 1 ? (
+                  <Text style={[styles.bubbleTime, styles.bubbleTimeMe, { color: T.primary, fontSize: 10, marginTop: 2 }]}>
+                    ✓✓ Read
                   </Text>
                 ) : null}
               </View>
@@ -656,7 +767,7 @@ function ConversationScreen({
           <TextInput
             style={styles.chatInput}
             value={draft}
-            onChangeText={setDraft}
+            onChangeText={(t) => { setDraft(t); emitTyping(); }}
             placeholder={isPendingMatch ? 'Start the conversation...' : 'Message...'}
             placeholderTextColor="#9f98b7"
             multiline
@@ -868,11 +979,11 @@ export default function MatchesTab() {
             setDecliningMatchId(matchId);
             try {
               await api.post(`/applicant/matches/${matchId}/decline`, {});
-              
+
               // Remove match from local state
               setMatchCompanies(prev => prev.filter(m => m.id !== matchId));
               setConversations(prev => prev.filter(c => c.id !== matchId));
-              
+
               // Show brief feedback
               Alert.alert('Match Declined', 'This match has been removed from your list.');
             } catch (err: any) {
@@ -907,17 +1018,18 @@ export default function MatchesTab() {
         const startedAt = status && status !== 'pending' ? Date.now() : undefined;
 
         return {
-        id: String(m.id),
-        abbr: getAbbr(companyName),
-        color: getColor(i),
-        company: companyName,
-        role: job.title ?? m.job_title ?? '',
-        status: mapBackendStatusToUiStatus(status),
-        prompt: m.initial_message ?? '',
-        startedAt,
-        matchCreatedAt: matchedAt ? new Date(matchedAt).getTime() : now,
-        badgeCount: m.unread_count ?? 0,
-      };});
+          id: String(m.id),
+          abbr: getAbbr(companyName),
+          color: getColor(i),
+          company: companyName,
+          role: job.title ?? m.job_title ?? '',
+          status: mapBackendStatusToUiStatus(status),
+          prompt: m.initial_message ?? '',
+          startedAt,
+          matchCreatedAt: matchedAt ? new Date(matchedAt).getTime() : now,
+          badgeCount: m.unread_count ?? 0,
+        };
+      });
       setMatchCompanies(matches);
 
       const convs = items
@@ -1088,16 +1200,16 @@ export default function MatchesTab() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
-          styles.pageScroll, 
+          styles.pageScroll,
           { paddingBottom: tabBarHeight + 28 },
           // Center content when there are no matches and no conversations
           (visibleMatches.length === 0 && visibleConversations.length === 0) && styles.pageScrollCentered
         ]}
       >
         {visibleMatches.length > 0 && (
-          <MatchCarousel 
-            matches={visibleMatches} 
-            currentTime={currentTime} 
+          <MatchCarousel
+            matches={visibleMatches}
+            currentTime={currentTime}
             onOpen={openPendingMatch}
             onDecline={handleDeclineMatch}
             decliningMatchId={decliningMatchId}
@@ -1143,8 +1255,8 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   pageScroll: { paddingHorizontal: 20 },
-  pageScrollCentered: { 
-    flexGrow: 1, 
+  pageScrollCentered: {
+    flexGrow: 1,
     justifyContent: 'center',
     minHeight: Dimensions.get('window').height - 200,
   },

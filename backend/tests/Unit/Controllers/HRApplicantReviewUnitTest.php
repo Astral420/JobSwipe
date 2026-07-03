@@ -15,13 +15,13 @@ use ReflectionClass;
 
 class HRApplicantReviewUnitTest extends TestCase
 {
-    public function test_hr_swipe_request_validation_rules_require_message(): void
+    public function test_hr_swipe_request_validation_rules_allow_template_fallback_message(): void
     {
         $request = new HRSwipeRequest;
         $rules = $request->rules();
 
         $this->assertArrayHasKey('message', $rules);
-        $this->assertSame(['required', 'string', 'min:10', 'max:1000'], $rules['message']);
+        $this->assertSame(['nullable', 'string', 'min:10', 'max:1000'], $rules['message']);
     }
 
     public function test_skill_match_calculation_accuracy(): void

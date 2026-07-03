@@ -77,6 +77,13 @@ Route::middleware('throttle:api-tiered')->group(function () {
             Route::post('auth/logout', [AuthController::class, 'logout']);
             Route::get('auth/me', [AuthController::class, 'me']);
 
+            // ── WebSocket channel authentication (Reverb / Pusher-compatible) ──
+            // The default /broadcasting/auth is behind web (session) middleware.
+            // This exposes the same endpoint to Bearer-token (Sanctum) clients.
+            Route::post('broadcasting/auth', function (\Illuminate\Http\Request $request) {
+                return \Illuminate\Support\Facades\Broadcast::auth($request);
+            });
+
             Route::prefix('files')->group(function () {
                 Route::post('upload-url', [FileUploadController::class, 'generateUploadUrl']);
                 Route::post('read-url', [FileUploadController::class, 'generateReadUrl']);
@@ -160,6 +167,7 @@ Route::middleware('throttle:api-tiered')->group(function () {
 
                 Route::apiResource('jobs', JobPostingController::class);
                 Route::post('jobs/{id}/close', [JobPostingController::class, 'close']);
+                Route::post('jobs/{id}/reopen', [JobPostingController::class, 'reopen']);
                 Route::post('jobs/{id}/restore', [JobPostingController::class, 'restore']);
 
                 Route::prefix('jobs/{jobId}/applicants')->group(function () {

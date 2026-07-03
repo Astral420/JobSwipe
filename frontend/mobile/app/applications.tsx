@@ -142,7 +142,7 @@ export default function ApplicationsScreen() {
               <View style={s.metaItem}>
                 <MaterialCommunityIcons name="laptop" size={12} color={T.textHint} />
                 <Text style={[s.metaText, { color: T.textHint }]}>
-                  {item.work_type.charAt(0).toUpperCase() + item.work_type.slice(1)}
+                  {item.work_type === 'on_site' ? 'On-site' : item.work_type.charAt(0).toUpperCase() + item.work_type.slice(1)}
                 </Text>
               </View>
             )}
