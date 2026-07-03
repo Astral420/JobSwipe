@@ -8,12 +8,17 @@ use App\Http\Requests\Company\CreateJobPostingRequest;
 use App\Models\PostgreSQL\CompanyProfile;
 use App\Models\PostgreSQL\JobPosting;
 use App\Models\PostgreSQL\JobSkill;
+use App\Services\CompanyMembershipService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class JobPostingController extends Controller
 {
+    public function __construct(
+        private CompanyMembershipService $memberships,
+    ) {}
+
     /**
      * GET /api/v1/company/jobs
      *
@@ -30,6 +35,7 @@ class JobPostingController extends Controller
 
         $jobs = JobPosting::where('company_id', $company->id)
             ->with('skills')
+            ->withCount(['applications as applicants_count'])
             ->orderBy('created_at', 'desc')
             ->paginate(20);
 
@@ -52,10 +58,6 @@ class JobPostingController extends Controller
             return $this->error('NO_COMPANY_PROFILE', 'No company profile found for this user', 403);
         }
 
-        if ($company->subscription_status !== 'active') {
-            return $this->error('SUBSCRIPTION_REQUIRED', 'An active subscription is required to post jobs.', 402);
-        }
-
         $job = null;
 
         try {
@@ -64,7 +66,17 @@ class JobPostingController extends Controller
                 // both passing the limit check before either increments
                 $locked = CompanyProfile::lockForUpdate()->find($company->id);
 
-                if ($locked->subscription_tier === 'basic' && $locked->active_listings_count >= 5) {
+                if (! $locked) {
+                    throw new \RuntimeException('COMPANY_NOT_FOUND');
+                }
+
+                // Verification gate: company must be admin-approved
+                if ($locked->verification_status !== 'approved') {
+                    throw new \RuntimeException('VERIFICATION_REQUIRED');
+                }
+
+                // Trust-based listing cap
+                if ($locked->active_listings_count >= $locked->listing_cap) {
                     throw new ListingLimitReachedException;
                 }
 
@@ -75,7 +87,9 @@ class JobPostingController extends Controller
                     'salary_min' => $request->salary_min,
                     'salary_max' => $request->salary_max,
                     'salary_is_hidden' => $request->salary_is_hidden ?? false,
+                    'salary_period' => $request->salary_period ?? 'monthly',
                     'work_type' => $request->work_type,
+                    'employment_type' => $request->employment_type,
                     'location' => $request->location,
                     'location_city' => $request->location_city,
                     'location_region' => $request->location_region,
@@ -95,8 +109,17 @@ class JobPostingController extends Controller
 
                 $locked->increment('active_listings_count');
             });
+        } catch (\RuntimeException $e) {
+            if ($e->getMessage() === 'VERIFICATION_REQUIRED') {
+                return $this->error('VERIFICATION_REQUIRED', 'Your company must be verified to post jobs.', 403);
+            }
+            if ($e->getMessage() === 'COMPANY_NOT_FOUND') {
+                return $this->error('NO_COMPANY_PROFILE', 'No company profile found.', 403);
+            }
+
+            throw $e;
         } catch (ListingLimitReachedException) {
-            return $this->error('LISTING_LIMIT_REACHED', 'Active listing limit reached for your subscription tier', 403);
+            return $this->error('LISTING_LIMIT_REACHED', 'Active listing limit reached for your current trust level.', 403);
         }
 
         // Load skills so the response includes them
@@ -152,12 +175,14 @@ class JobPostingController extends Controller
             'title' => ['sometimes', 'string', 'max:255'],
             'description' => ['sometimes', 'string', 'min:100'],
             'work_type' => ['sometimes', 'in:remote,hybrid,on_site'],
+            'employment_type' => ['sometimes', 'in:full_time,part_time,contract,internship'],
             'location' => ['nullable', 'string', 'max:255'],
             'location_city' => ['nullable', 'string', 'max:100'],
             'location_region' => ['nullable', 'string', 'max:100'],
             'salary_min' => ['nullable', 'numeric', 'min:0'],
             'salary_max' => ['nullable', 'numeric', 'min:0', 'gte:salary_min'],
             'salary_is_hidden' => ['boolean'],
+            'salary_period' => ['sometimes', 'in:monthly,yearly'],
             'interview_template' => ['sometimes', 'string', 'max:1000'],
             'skills' => ['sometimes', 'array', 'min:1', 'max:20'],
             'skills.*.name' => ['required_with:skills', 'string', 'max:100'],
@@ -194,9 +219,9 @@ class JobPostingController extends Controller
     /**
      * DELETE /api/v1/company/jobs/{id}
      *
-     * Permanently remove a closed or expired posting.
+     * Soft delete a closed or expired posting with audit trail.
      * Active postings must be closed first to keep counters consistent.
-     * Skills cascade-delete via the foreign key constraint in the migration.
+     * Soft-deleted jobs remain in the database for audit/compliance purposes.
      */
     public function destroy(Request $request, string $id): JsonResponse
     {
@@ -210,9 +235,95 @@ class JobPostingController extends Controller
             return $this->error('INVALID_STATUS', 'Cannot delete an active job posting. Close it first.', 422);
         }
 
-        $job->delete();
+        // Soft delete with audit information
+        $job->deleted_by = $request->user()->id;
+        $job->deletion_reason = $request->input('reason'); // Optional reason
+        $job->save();
+        $job->delete(); // Soft delete
 
-        return $this->success(message: 'Job posting deleted');
+        return $this->success(message: 'Job posting deleted successfully');
+    }
+
+    /**
+     * POST /api/v1/company/jobs/{id}/restore
+     *
+     * Restore a soft-deleted job posting.
+     * Only the owning company can restore their deleted jobs.
+     * Restored jobs return to their previous status (closed/expired).
+     */
+    public function restore(Request $request, string $id): JsonResponse
+    {
+        $job = JobPosting::onlyTrashed()->findOrFail($id);
+
+        if (! $this->ownsJob($request, $job)) {
+            return $this->error('UNAUTHORIZED', 'Not authorized to restore this job posting', 403);
+        }
+
+        $job->restore();
+
+        // Clear audit fields
+        $job->update([
+            'deleted_by' => null,
+            'deletion_reason' => null,
+        ]);
+
+        $job->load('skills');
+
+        return $this->success(data: $job, message: 'Job posting restored successfully');
+    }
+
+    /**
+     * DELETE /api/v1/company/jobs/{id}/force
+     *
+     * Permanently delete a job posting (hard delete).
+     * This is irreversible and should only be used by admins for compliance reasons.
+     * Requires super_admin role.
+     *
+     * Requirements: 5.6
+     */
+    public function forceDestroy(Request $request, string $id): JsonResponse
+    {
+        try {
+            $job = JobPosting::withTrashed()->find($id);
+
+            if (! $job) {
+                return $this->error('JOB_NOT_FOUND', 'Job posting not found', 404);
+            }
+
+            // Store job data for audit log before deletion
+            $jobData = [
+                'title' => $job->title,
+                'company_id' => $job->company_id,
+                'status' => $job->status,
+            ];
+
+            // Remove from search index if it was indexed
+            $job->unsearchable();
+
+            // Permanently delete
+            $job->forceDelete();
+
+            // Log audit
+            app(\App\Services\AuditService::class)->log(
+                'job_force_delete',
+                'job',
+                $id,
+                $request->user(),
+                $jobData,
+                $jobData,
+                null
+            );
+
+            return $this->success(message: 'Job posting permanently deleted');
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Job force delete failed', [
+                'job_id' => $id,
+                'error' => $e->getMessage(),
+                'user_id' => $request->user()->id,
+            ]);
+
+            return $this->error('INTERNAL_ERROR', 'Failed to delete job posting', 500);
+        }
     }
 
     /**
@@ -245,15 +356,53 @@ class JobPostingController extends Controller
     }
 
     /**
+     * POST /api/v1/company/jobs/{id}/reopen
+     *
+     * Reopen a closed job posting. This sets the status back to active,
+     * refreshes the publication/expiry dates, and re-indexes in Meilisearch.
+     * This is distinct from restore(), which un-deletes soft-deleted records.
+     */
+    public function reopen(Request $request, string $id): JsonResponse
+    {
+        $job = JobPosting::findOrFail($id);
+
+        if (! $this->ownsJob($request, $job)) {
+            return $this->error('UNAUTHORIZED', 'Not authorized to reopen this job posting', 403);
+        }
+
+        if ($job->status !== 'closed') {
+            return $this->error('INVALID_STATUS', 'Only closed job postings can be reopened', 422);
+        }
+
+        // Check listing cap before reopening
+        $company = $job->company;
+        if ($company->active_listings_count >= $company->listing_cap) {
+            return $this->error('LISTING_LIMIT_REACHED', 'Active listing limit reached for your current trust level.', 403);
+        }
+
+        $job->update([
+            'status' => 'active',
+            'published_at' => now(),
+            'expires_at' => now()->addDays(30),
+        ]);
+
+        $company->increment('active_listings_count');
+
+        $job->load('skills');
+
+        // Re-index in Meilisearch so applicants can find it again
+        $job->searchable();
+
+        return $this->success(data: $job, message: 'Job posting reopened');
+    }
+
+    /**
      * Resolve the authenticated user's company profile.
-     * Uses loadMissing so repeated calls within the same request
-     * only hit the database once.
+     * Membership-aware: supports both company owners and invited HR/admin members.
      */
     private function getCompany(Request $request): ?CompanyProfile
     {
-        $request->user()->loadMissing('companyProfile');
-
-        return $request->user()->companyProfile;
+        return $this->memberships->getPrimaryCompanyForUser($request->user()->id);
     }
 
     /**

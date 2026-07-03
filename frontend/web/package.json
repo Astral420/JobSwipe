@@ -13,16 +13,26 @@
     "test:integration": "echo \"No integration tests configured yet\" && exit 0"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@tanstack/react-query": "^5.99.2",
+    "@tanstack/react-table": "^8.21.3",
+    "axios": "^1.6",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.8.0",
+    "next": "^16.2.4",
+    "next-auth": "^4",
     "react": "^18",
     "react-dom": "^18",
-    "next": "^14",
-    "typescript": "^5",
-    "axios": "^1.6",
-    "zustand": "^4",
+    "react-hook-form": "^7.73.1",
+    "recharts": "^3.8.1",
+    "tailwind-merge": "^3.5.0",
     "tailwindcss": "^3",
-    "next-auth": "^4"
+    "typescript": "^5",
+    "zod": "^4.3.6",
+    "zustand": "^4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.40",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
@@ -32,7 +42,6 @@
     "eslint": "^8",
     "eslint-config-next": "^14",
     "postcss": "^8",
-    "prettier": "^3",
-    "@playwright/test": "^1.40"
+    "prettier": "^3"
   }
 }

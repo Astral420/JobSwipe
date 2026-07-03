@@ -4,9 +4,9 @@ namespace Tests\Unit\Exceptions;
 
 use App\Exceptions\FileUploadException;
 use App\Exceptions\SubscriptionException;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase as LaravelTestCase;
 
-class ApiExceptionFormatTest extends TestCase
+class ApiExceptionFormatTest extends LaravelTestCase
 {
     public function test_file_upload_exception_renders_consistent_json_response(): void
     {

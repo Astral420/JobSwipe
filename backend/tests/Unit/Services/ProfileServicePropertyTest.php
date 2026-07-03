@@ -9,7 +9,11 @@ use App\Repositories\MongoDB\ApplicantProfileDocumentRepository;
 use App\Repositories\MongoDB\CompanyProfileDocumentRepository;
 use App\Repositories\PostgreSQL\ApplicantProfileRepository;
 use App\Repositories\PostgreSQL\CompanyProfileRepository;
+use App\Services\PointService;
+use App\Services\ProfileCompletionService;
+use App\Services\ProfileOnboardingService;
 use App\Services\ProfileService;
+use App\Services\ProfileSocialLinksValidator;
 use InvalidArgumentException;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -22,7 +26,7 @@ class ProfileServicePropertyTest extends TestCase
     {
         parent::setUp();
 
-        $this->service = new ProfileService(
+        $this->service = $this->makeService(
             $this->createMock(ApplicantProfileRepository::class),
             $this->createMock(CompanyProfileRepository::class),
             $this->createMock(ApplicantProfileDocumentRepository::class),
@@ -115,7 +119,7 @@ class ProfileServicePropertyTest extends TestCase
         $companyProfiles->method('findByUserId')->willReturn($company);
         $companyDocs->method('findByUserId')->willReturn($document);
 
-        $service = new ProfileService(
+        $service = $this->makeService(
             $this->createMock(ApplicantProfileRepository::class),
             $companyProfiles,
             $this->createMock(ApplicantProfileDocumentRepository::class),
@@ -138,5 +142,33 @@ class ProfileServicePropertyTest extends TestCase
         $method = $ref->getMethod('validateSocialLinks');
         $method->setAccessible(true);
         $method->invoke($this->service, $socialLinks);
+    }
+
+    private function makeService(
+        ApplicantProfileRepository $applicantProfiles,
+        CompanyProfileRepository $companyProfiles,
+        ApplicantProfileDocumentRepository $applicantDocs,
+        CompanyProfileDocumentRepository $companyDocs,
+    ): ProfileService {
+        $completion = new ProfileCompletionService;
+        $socialLinksValidator = new ProfileSocialLinksValidator;
+        $onboarding = new ProfileOnboardingService(
+            $applicantDocs,
+            $companyDocs,
+            $companyProfiles,
+            $completion,
+            $socialLinksValidator,
+        );
+
+        return new ProfileService(
+            $applicantProfiles,
+            $companyProfiles,
+            $applicantDocs,
+            $companyDocs,
+            $this->createMock(PointService::class),
+            $completion,
+            $onboarding,
+            $socialLinksValidator,
+        );
     }
 }

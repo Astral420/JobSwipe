@@ -73,4 +73,9 @@ class ApplicantProfileDocumentRepository
             $profile->update(['notification_preferences' => $merged]);
         }
     }
+
+    public function getAll(): Collection
+    {
+        return ApplicantProfileDocument::all();
+    }
 }

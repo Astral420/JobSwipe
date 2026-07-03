@@ -31,6 +31,7 @@ class ApiRoutesIntegrationTest extends TestCase
 
         $this->assertStringContainsString("Route::prefix('files')", $routes);
         $this->assertStringContainsString("Route::post('upload-url'", $routes);
+        $this->assertStringContainsString("Route::post('read-url'", $routes);
         $this->assertStringContainsString("Route::prefix('subscriptions')", $routes);
         $this->assertStringContainsString("Route::post('webhooks/stripe'", $routes);
     }

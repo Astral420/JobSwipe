@@ -19,27 +19,12 @@ class ProfileService
         private CompanyProfileRepository $companyProfiles,
         private ApplicantProfileDocumentRepository $applicantDocs,
         private CompanyProfileDocumentRepository $companyDocs,
+        private CompanyMembershipService $memberships,
         private PointService $points,
-        ?ProfileCompletionService $completion = null,
-        ?ProfileOnboardingService $onboarding = null,
-        ?ProfileSocialLinksValidator $socialLinksValidator = null,
-    ) {
-        $this->completion = $completion ?? new ProfileCompletionService;
-        $this->socialLinksValidator = $socialLinksValidator ?? new ProfileSocialLinksValidator;
-        $this->onboarding = $onboarding ?? new ProfileOnboardingService(
-            $this->applicantDocs,
-            $this->companyDocs,
-            $this->companyProfiles,
-            $this->completion,
-            $this->socialLinksValidator,
-        );
-    }
-
-    private ProfileCompletionService $completion;
-
-    private ProfileOnboardingService $onboarding;
-
-    private ProfileSocialLinksValidator $socialLinksValidator;
+        private ProfileCompletionService $completion,
+        private ProfileOnboardingService $onboarding,
+        private ProfileSocialLinksValidator $socialLinksValidator,
+    ) {}
 
     public function createProfileForUser(User $user, ?string $avatarUrl = null): void
     {
@@ -48,6 +33,21 @@ class ProfileService
             'hr', 'company_admin' => $this->createCompanyProfile($user),
             default => null,
         };
+    }
+
+    public function setCompanyEmailDomain(string $userId, string $email): void
+    {
+        $companyProfile = $this->companyProfiles->findByUserId($userId);
+        if (! $companyProfile) {
+            return;
+        }
+
+        $validation = app(CompanyEmailValidator::class)->validate($email);
+
+        $this->companyProfiles->update($companyProfile, [
+            'company_domain' => $validation['domain'],
+            'is_free_email_domain' => $validation['is_free'],
+        ]);
     }
 
     public function getApplicantProfile(string $userId): array
@@ -70,6 +70,7 @@ class ProfileService
             'bio',
             'location',
             'location_city',
+            'location_country',
             'location_region',
         ]));
 
@@ -81,7 +82,14 @@ class ProfileService
     public function updateApplicantSkills(string $userId, array $skills): array
     {
         $profile = $this->ensureApplicantDocument($userId);
-        $updated = $this->applicantDocs->update($profile, ['skills' => array_values($skills)]);
+
+        // Ensure skills has the correct structure
+        $skillsData = [
+            'hard_skills' => $skills['hard_skills'] ?? [],
+            'soft_skills' => $skills['soft_skills'] ?? [],
+        ];
+
+        $updated = $this->applicantDocs->update($profile, ['skills' => $skillsData]);
 
         return $this->withApplicantCompletion($updated);
     }
@@ -186,10 +194,34 @@ class ProfileService
         return $this->withApplicantCompletion($updated);
     }
 
+    public function updateApplicantPortfolio(string $userId, string $portfolioUrl): array
+    {
+        $profile = $this->ensureApplicantDocument($userId);
+        $updated = $this->applicantDocs->update($profile, ['portfolio_url' => $portfolioUrl]);
+
+        return $this->withApplicantCompletion($updated);
+    }
+
     public function updateApplicantPhoto(string $userId, string $photoUrl): array
     {
         $profile = $this->ensureApplicantDocument($userId);
         $updated = $this->applicantDocs->update($profile, ['profile_photo_url' => $photoUrl]);
+
+        return $this->withApplicantCompletion($updated);
+    }
+
+    public function updateApplicantCoverPhoto(string $userId, string $coverUrl): array
+    {
+        $profile = $this->ensureApplicantDocument($userId);
+        $updated = $this->applicantDocs->update($profile, ['cover_url' => $coverUrl]);
+
+        return $this->withApplicantCompletion($updated);
+    }
+
+    public function updateApplicantPhotos(string $userId, array $photos): array
+    {
+        $profile = $this->ensureApplicantDocument($userId);
+        $updated = $this->applicantDocs->update($profile, ['photos' => $photos]);
 
         return $this->withApplicantCompletion($updated);
     }
@@ -200,6 +232,25 @@ class ProfileService
 
         $profile = $this->ensureApplicantDocument($userId);
         $updated = $this->applicantDocs->update($profile, ['social_links' => $socialLinks]);
+
+        return $this->withApplicantCompletion($updated);
+    }
+
+    public function updateJobPreferences(string $userId, array $jobPreferences): array
+    {
+        $profile = $this->ensureApplicantDocument($userId);
+
+        // Validate and structure job preferences
+        $preferencesData = [
+            'desired_position' => $jobPreferences['desired_position'] ?? null,
+            'preferred_locations' => $jobPreferences['preferred_locations'] ?? [],
+            'work_type' => $jobPreferences['work_type'] ?? [],
+            'employment_type' => $jobPreferences['employment_type'] ?? [],
+            'salary_expectation' => $jobPreferences['salary_expectation'] ?? null,
+            'willing_to_relocate' => $jobPreferences['willing_to_relocate'] ?? null,
+        ];
+
+        $updated = $this->applicantDocs->update($profile, ['job_preferences' => $preferencesData]);
 
         return $this->withApplicantCompletion($updated);
     }
@@ -215,6 +266,8 @@ class ProfileService
             'profile_completion_percentage' => $completion,
             'subscription_status' => $companyProfile->subscription_status,
             'subscription_tier' => $companyProfile->subscription_tier,
+            'is_verified' => (bool) $companyProfile->is_verified,
+            'verification_status' => $companyProfile->verification_status,
         ];
     }
 
@@ -233,6 +286,9 @@ class ProfileService
             'website_url',
             'address',
             'social_links',
+            'cover_photo',
+            'office_images',
+            'benefits',
         ]));
 
         if (array_key_exists('company_name', $allowed)) {
@@ -344,7 +400,7 @@ class ProfileService
             'subscription_status' => 'inactive',
             'total_points' => 0,
             'daily_swipes_used' => 0,
-            'daily_swipe_limit' => 15,
+            'daily_swipe_limit' => 65,
             'extra_swipe_balance' => 0,
         ]);
 
@@ -353,15 +409,17 @@ class ProfileService
             'first_name' => '',
             'last_name' => '',
             'profile_photo_url' => $avatarUrl,
+            'cover_url' => null,
+            'photos' => [],
             'bio' => null,
             'location' => null,
             'location_city' => null,
             'location_region' => null,
-            'skills' => [],
+            'skills' => ['hard_skills' => [], 'soft_skills' => []],
+            'job_preferences' => null,
             'work_experience' => [],
             'education' => [],
             'social_links' => [],
-            'completed_profile_fields' => [],
             'notification_preferences' => [],
             'onboarding_step' => 1,
             'onboarding_completed_at' => null,
@@ -373,13 +431,27 @@ class ProfileService
     {
         $companyProfile = $this->companyProfiles->create([
             'user_id' => $user->id,
+            'owner_user_id' => $user->role === 'company_admin' ? $user->id : null,
             'company_name' => '',
             'is_verified' => false,
-            'verification_status' => 'pending',
-            'subscription_tier' => 'none',
-            'subscription_status' => 'inactive',
+            'verification_status' => 'unverified',
+            'subscription_tier' => 'free',
+            'subscription_status' => 'active',
+            'trust_score' => 0,
+            'trust_level' => 'untrusted',
+            'listing_cap' => 0,
             'active_listings_count' => 0,
         ]);
+
+        // Some PostgreSQL UUID defaults may not be hydrated on the first model instance.
+        if (! $this->filled($companyProfile->id ?? null)) {
+            $companyProfile = $this->companyProfiles->findByUserId($user->id) ?? $companyProfile;
+        }
+
+        if ($this->filled($companyProfile->id ?? null)) {
+            $membershipRole = $user->role === 'company_admin' ? 'company_admin' : 'hr';
+            $this->memberships->addMember($companyProfile->id, $user->id, $membershipRole);
+        }
 
         $this->companyDocs->create([
             'user_id' => $user->id,

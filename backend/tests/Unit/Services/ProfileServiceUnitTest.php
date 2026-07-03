@@ -9,7 +9,11 @@ use App\Repositories\MongoDB\ApplicantProfileDocumentRepository;
 use App\Repositories\MongoDB\CompanyProfileDocumentRepository;
 use App\Repositories\PostgreSQL\ApplicantProfileRepository;
 use App\Repositories\PostgreSQL\CompanyProfileRepository;
+use App\Services\PointService;
+use App\Services\ProfileCompletionService;
+use App\Services\ProfileOnboardingService;
 use App\Services\ProfileService;
+use App\Services\ProfileSocialLinksValidator;
 use InvalidArgumentException;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -24,7 +28,7 @@ class ProfileServiceUnitTest extends TestCase
         $applicantDocs->expects($this->exactly(2))
             ->method('update');
 
-        $service = new ProfileService(
+        $service = $this->makeService(
             $this->createMock(ApplicantProfileRepository::class),
             $this->createMock(CompanyProfileRepository::class),
             $applicantDocs,
@@ -69,7 +73,7 @@ class ProfileServiceUnitTest extends TestCase
         $companyDocs->expects($this->once())
             ->method('update');
 
-        $service = new ProfileService(
+        $service = $this->makeService(
             $this->createMock(ApplicantProfileRepository::class),
             $this->createMock(CompanyProfileRepository::class),
             $this->createMock(ApplicantProfileDocumentRepository::class),
@@ -88,6 +92,7 @@ class ProfileServiceUnitTest extends TestCase
         $profile->verification_documents = ['https://cdn.jobswipe/doc1.pdf'];
 
         $company = new CompanyProfile;
+        $company->verification_status = 'pending';
         $company->subscription_status = 'active';
 
         $percentage = $service->calculateCompanyCompletion($profile, $company);
@@ -101,6 +106,7 @@ class ProfileServiceUnitTest extends TestCase
         $applicantDocs = $this->createMock(ApplicantProfileDocumentRepository::class);
 
         $profile = new ApplicantProfileDocument;
+        $profile->user_id = 'user-1';
         $profile->onboarding_step = 3;
         $profile->profile_completion_percentage = 50;
 
@@ -109,7 +115,7 @@ class ProfileServiceUnitTest extends TestCase
             ->with('user-1')
             ->willReturn($profile);
 
-        $service = new ProfileService(
+        $service = $this->makeService(
             $this->createMock(ApplicantProfileRepository::class),
             $this->createMock(CompanyProfileRepository::class),
             $applicantDocs,
@@ -140,14 +146,14 @@ class ProfileServiceUnitTest extends TestCase
             ->willReturn($company);
 
         $profile = new CompanyProfileDocument;
-        $profile->office_images = array_fill(0, ProfileService::MAX_OFFICE_IMAGES, 'https://cdn.jobswipe.test/office.jpg');
+        $profile->office_images = array_fill(0, ProfileOnboardingService::MAX_OFFICE_IMAGES, 'https://cdn.jobswipe.test/office.jpg');
 
         $companyDocs->expects($this->once())
             ->method('findByUserId')
             ->with('user-1')
             ->willReturn($profile);
 
-        $service = new ProfileService(
+        $service = $this->makeService(
             $this->createMock(ApplicantProfileRepository::class),
             $companyRepo,
             $this->createMock(ApplicantProfileDocumentRepository::class),
@@ -173,7 +179,7 @@ class ProfileServiceUnitTest extends TestCase
             ->with('user-1')
             ->willReturn($profile);
 
-        $service = new ProfileService(
+        $service = $this->makeService(
             $this->createMock(ApplicantProfileRepository::class),
             $this->createMock(CompanyProfileRepository::class),
             $applicantDocs,
@@ -184,5 +190,33 @@ class ProfileServiceUnitTest extends TestCase
         $this->expectExceptionMessage('INVALID_ONBOARDING_STEP');
 
         $service->completeOnboardingStep('user-1', 'applicant', 2, []);
+    }
+
+    private function makeService(
+        ApplicantProfileRepository $applicantProfiles,
+        CompanyProfileRepository $companyProfiles,
+        ApplicantProfileDocumentRepository $applicantDocs,
+        CompanyProfileDocumentRepository $companyDocs,
+    ): ProfileService {
+        $completion = new ProfileCompletionService;
+        $socialLinksValidator = new ProfileSocialLinksValidator;
+        $onboarding = new ProfileOnboardingService(
+            $applicantDocs,
+            $companyDocs,
+            $companyProfiles,
+            $completion,
+            $socialLinksValidator,
+        );
+
+        return new ProfileService(
+            $applicantProfiles,
+            $companyProfiles,
+            $applicantDocs,
+            $companyDocs,
+            $this->createMock(PointService::class),
+            $completion,
+            $onboarding,
+            $socialLinksValidator,
+        );
     }
 }

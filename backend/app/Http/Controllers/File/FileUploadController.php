@@ -3,10 +3,11 @@
 namespace App\Http\Controllers\File;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\File\ConfirmUploadRequest;
+use App\Http\Requests\File\GenerateReadUrlRequest;
 use App\Http\Requests\File\GenerateUploadUrlRequest;
 use App\Services\FileUploadService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
 class FileUploadController extends Controller
 {
@@ -14,22 +15,31 @@ class FileUploadController extends Controller
 
     public function generateUploadUrl(GenerateUploadUrlRequest $request): JsonResponse
     {
+        $validated = $request->validated();
+
         $result = $this->fileUploads->generatePresignedUrl(
             userId: (string) $request->user()->id,
-            fileName: (string) $request->input('file_name'),
-            fileType: (string) $request->input('file_type'),
-            fileSize: (int) $request->input('file_size'),
-            uploadType: (string) $request->input('upload_type'),
+            fileName: (string) $validated['file_name'],
+            fileType: (string) $validated['file_type'],
+            fileSize: (int) $validated['file_size'],
+            uploadType: (string) $validated['upload_type'],
         );
 
         return $this->success(data: $result, message: 'Upload URL generated.');
     }
 
-    public function confirmUpload(Request $request): JsonResponse
+    public function generateReadUrl(GenerateReadUrlRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'file_url' => ['required', 'string', 'max:2000'],
-        ]);
+        $validated = $request->validated();
+
+        $result = $this->fileUploads->generatePresignedReadUrl((string) $validated['file_url']);
+
+        return $this->success(data: $result, message: 'Read URL generated.');
+    }
+
+    public function confirmUpload(ConfirmUploadRequest $request): JsonResponse
+    {
+        $validated = $request->validated();
 
         $this->fileUploads->validateFileUrl((string) $validated['file_url']);
 

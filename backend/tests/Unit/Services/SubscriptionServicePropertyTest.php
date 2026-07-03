@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Repositories\PostgreSQL\CompanyProfileRepository;
 use App\Services\SubscriptionService;
+use App\Services\TrustScoreService;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -11,7 +12,9 @@ class SubscriptionServicePropertyTest extends TestCase
 {
     public function test_property_map_stripe_status_returns_known_internal_statuses(): void
     {
-        $service = new SubscriptionService($this->createMock(CompanyProfileRepository::class));
+        $repo = $this->createMock(CompanyProfileRepository::class);
+        $trustScore = $this->createMock(TrustScoreService::class);
+        $service = new SubscriptionService($repo, $trustScore);
 
         $ref = new ReflectionClass($service);
         $method = $ref->getMethod('mapStripeStatus');

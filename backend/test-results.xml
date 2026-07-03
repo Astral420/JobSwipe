@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="/var/www/html/phpunit.xml.dist" tests="1" assertions="1" errors="0" failures="1" skipped="0" time="4.766629">
+    <testsuite name="Feature" tests="1" assertions="1" errors="0" failures="1" skipped="0" time="4.766629">
+      <testsuite name="Tests\Feature\HR\BulkInviteTest" file="/var/www/html/tests/Feature/HR/BulkInviteTest.php" tests="1" assertions="1" errors="0" failures="1" skipped="0" time="4.766629">
+        <testcase name="test_bulk_invite_success" file="/var/www/html/tests/Feature/HR/BulkInviteTest.php" line="37" class="Tests\Feature\HR\BulkInviteTest" classname="Tests.Feature.HR.BulkInviteTest" assertions="1" time="4.766629">
+          <failure type="PHPUnit\Framework\ExpectationFailedException">Tests\Feature\HR\BulkInviteTest::test_bulk_invite_success
+Expected response status code [200] but received 404.
+Failed asserting that 404 is identical to 200.
+
+/var/www/html/vendor/laravel/framework/src/Illuminate/Testing/TestResponseAssert.php:45
+/var/www/html/vendor/laravel/framework/src/Illuminate/Testing/TestResponse.php:160
+/var/www/html/tests/Feature/HR/BulkInviteTest.php:44</failure>
+        </testcase>
+      </testsuite>
+    </testsuite>
+  </testsuite>
+</testsuites>

@@ -44,6 +44,7 @@ Error:
 | Method | Endpoint | Auth | Middleware |
 | --- | --- | --- | --- |
 | POST | `/files/upload-url` | Yes | `auth:sanctum` |
+| POST | `/files/read-url` | Yes | `auth:sanctum` |
 | POST | `/files/confirm-upload` | Yes | `auth:sanctum` |
 
 ## Applicant Profile

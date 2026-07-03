@@ -35,17 +35,10 @@ class CheckSwipeLimit
             ], 404);
         }
 
+        // Advisory-only preflight. Authoritative enforcement happens atomically
+        // in SwipeService to prevent TOCTOU races under concurrent requests.
         if (! $applicant->hasSwipesRemaining()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Daily swipe limit reached. Upgrade or purchase swipe packs.',
-                'code' => 'SWIPE_LIMIT_REACHED',
-                'data' => [
-                    'daily_swipes_used' => $applicant->daily_swipes_used,
-                    'daily_swipe_limit' => $applicant->daily_swipe_limit,
-                    'extra_swipe_balance' => $applicant->extra_swipe_balance,
-                ],
-            ], 429);
+            $request->attributes->set('swipe_limit_precheck_failed', true);
         }
 
         return $next($request);

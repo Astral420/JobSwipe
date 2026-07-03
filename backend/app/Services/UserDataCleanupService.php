@@ -46,12 +46,20 @@ class UserDataCleanupService
 
     private function scanAndDelete(string $pattern): void
     {
-        $cursor = 0;
+        // Redis SCAN cursor is string-based; use string comparison to avoid infinite loops.
+        $cursor = '0';
         do {
-            [$cursor, $keys] = Redis::scan($cursor, ['MATCH' => $pattern, 'COUNT' => 100]);
+            $result = Redis::scan($cursor, ['MATCH' => $pattern, 'COUNT' => 100]);
+            if ($result === false) {
+                break;
+            }
+
+            [$nextCursor, $keys] = $result;
+            $cursor = (string) $nextCursor;
+
             if (! empty($keys)) {
                 Redis::del(...$keys);
             }
-        } while ($cursor !== 0);
+        } while ($cursor !== '0');
     }
 }

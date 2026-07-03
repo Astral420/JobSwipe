@@ -18,7 +18,6 @@ ios/Podfile.lock
 !deploy/.env.render.template
 !deploy/.env.production.template
 
-# Production secrets - NEVER COMMIT
 deploy/.env.production
 deploy/SECRETS.txt
 deploy/connection-info.txt
@@ -28,9 +27,9 @@ deploy/connection-info.txt
 .vscode/
 .idea/
 *.swp
+# Production secrets - NEVER COMMIT
 *.swo
 *.swn
-.DS_Store
 *.iml
 
 # Build artifacts
@@ -40,6 +39,7 @@ build/
 out/
 android/app/build/
 ios/build/
+.DS_Store
 
 # Logs
 *.log
@@ -66,3 +66,5 @@ public/storage
 
 # Misc
 .turbo/
+.stfolder
+.stignore

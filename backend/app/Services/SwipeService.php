@@ -2,11 +2,12 @@
 
 namespace App\Services;
 
-use App\Jobs\SendMatchNotification;
 use App\Models\PostgreSQL\ApplicantProfile;
+use App\Models\PostgreSQL\Application;
 use App\Repositories\MongoDB\SwipeHistoryRepository;
 use App\Repositories\PostgreSQL\ApplicationRepository;
 use App\Repositories\Redis\SwipeCacheRepository;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 class SwipeService
@@ -15,6 +16,8 @@ class SwipeService
         private SwipeCacheRepository $cache,
         private SwipeHistoryRepository $swipeHistory,
         private ApplicationRepository $applications,
+        private MatchService $matchService,
+        private DeckService $deckService,
     ) {}
 
     // ── Applicant swipes right on a job ────────────────────────────────────
@@ -23,12 +26,7 @@ class SwipeService
     {
         $applicant = ApplicantProfile::where('user_id', $userId)->firstOrFail();
 
-        // 1. Enforce daily swipe limit
-        if (! $this->hasSwipesRemaining($applicant)) {
-            return ['status' => 'limit_reached'];
-        }
-
-        // 2. Deduplication — Redis first, MongoDB fallback
+        // 1. Deduplication — Redis first, MongoDB fallback
         if ($this->hasAlreadySwiped($userId, $jobId, 'job_posting')) {
             return ['status' => 'already_swiped'];
         }
@@ -50,10 +48,33 @@ class SwipeService
 
         try {
             DB::transaction(function () use ($applicant, $userId, $jobId) {
+                if (! $this->consumeApplicantSwipeAtomically((string) $applicant->id)) {
+                    throw new \RuntimeException('SWIPE_LIMIT_REACHED');
+                }
+
                 $this->applications->create($applicant->id, $jobId);
-                $applicant->increment('daily_swipes_used');
                 $this->markJobSeenInPostgres($userId, $jobId);
             });
+        } catch (QueryException $e) {
+            if ($swipeDoc && $swipeDoc->_id) {
+                $this->swipeHistory->deleteById($swipeDoc->_id);
+            }
+
+            $sqlState = $e->errorInfo[0] ?? $e->getCode();
+            if (in_array((string) $sqlState, ['23000', '23505'], true)) {
+                return ['status' => 'already_swiped'];
+            }
+            throw $e;
+        } catch (\RuntimeException $e) {
+            if ($swipeDoc && $swipeDoc->_id) {
+                $this->swipeHistory->deleteById($swipeDoc->_id);
+            }
+
+            if ($e->getMessage() === 'SWIPE_LIMIT_REACHED') {
+                return ['status' => 'limit_reached'];
+            }
+
+            throw $e;
         } catch (\Throwable $e) {
             // Rollback MongoDB write if PostgreSQL fails
             if ($swipeDoc && $swipeDoc->_id) {
@@ -66,6 +87,9 @@ class SwipeService
         $this->cache->markJobSeen($userId, $jobId);
         $this->cache->incrementCounter($userId);
 
+        // Invalidate total unseen count cache since user just swiped
+        $this->deckService->invalidateTotalUnseenCache($userId);
+
         return ['status' => 'applied'];
     }
 
@@ -75,12 +99,7 @@ class SwipeService
     {
         $applicant = ApplicantProfile::where('user_id', $userId)->firstOrFail();
 
-        // 1. Enforce daily swipe limit
-        if (! $this->hasSwipesRemaining($applicant)) {
-            return ['status' => 'limit_reached'];
-        }
-
-        // 2. Deduplication check
+        // 1. Deduplication check
         if ($this->hasAlreadySwiped($userId, $jobId, 'job_posting')) {
             return ['status' => 'already_swiped'];
         }
@@ -99,9 +118,22 @@ class SwipeService
         // 4. Update PostgreSQL counter in transaction
         try {
             DB::transaction(function () use ($applicant, $userId, $jobId) {
-                $applicant->increment('daily_swipes_used');
+                if (! $this->consumeApplicantSwipeAtomically((string) $applicant->id)) {
+                    throw new \RuntimeException('SWIPE_LIMIT_REACHED');
+                }
+
                 $this->markJobSeenInPostgres($userId, $jobId);
             });
+        } catch (\RuntimeException $e) {
+            if ($swipeDoc && $swipeDoc->_id) {
+                $this->swipeHistory->deleteById($swipeDoc->_id);
+            }
+
+            if ($e->getMessage() === 'SWIPE_LIMIT_REACHED') {
+                return ['status' => 'limit_reached'];
+            }
+
+            throw $e;
         } catch (\Throwable $e) {
             // Rollback MongoDB write if PostgreSQL fails
             if ($swipeDoc && $swipeDoc->_id) {
@@ -113,6 +145,9 @@ class SwipeService
         // 5. Update Redis cache
         $this->cache->markJobSeen($userId, $jobId);
         $this->cache->incrementCounter($userId);
+
+        // Invalidate total unseen count cache since user just swiped
+        $this->deckService->invalidateTotalUnseenCache($userId);
 
         return ['status' => 'dismissed'];
     }
@@ -126,28 +161,66 @@ class SwipeService
             return ['status' => 'already_swiped'];
         }
 
-        // 2. Write to MongoDB + update PostgreSQL application status
-        DB::transaction(function () use ($hrUserId, $jobId, $applicantId, $message) {
-            $this->swipeHistory->recordSwipe([
-                'user_id' => $hrUserId,
-                'actor_type' => 'hr',
-                'direction' => 'right',
-                'target_id' => $applicantId,
-                'target_type' => 'applicant',
-                'job_posting_id' => $jobId,
-                'meta' => [],
-            ]);
+        if (! $this->applications->exists($applicantId, $jobId)) {
+            return ['status' => 'application_not_found'];
+        }
 
-            $this->applications->markInvited($applicantId, $jobId, $message);
-        });
+        // 2. Write to MongoDB first, then update PostgreSQL
+        $swipeDoc = $this->swipeHistory->recordSwipe([
+            'user_id' => $hrUserId,
+            'actor_type' => 'hr',
+            'direction' => 'right',
+            'target_id' => $applicantId,
+            'target_type' => 'applicant',
+            'job_posting_id' => $jobId,
+            'meta' => [],
+        ]);
+
+        try {
+            $application = Application::where('applicant_id', $applicantId)
+                ->where('job_posting_id', $jobId)
+                ->firstOrFail();
+
+            $this->matchService->createMatch(
+                applicationId: $application->id,
+                applicantId: $applicantId,
+                jobId: $jobId,
+                hrUserId: $hrUserId,
+                initialMessage: $message,
+            );
+        } catch (\RuntimeException $e) {
+            if ($swipeDoc && $swipeDoc->_id) {
+                $this->swipeHistory->deleteById($swipeDoc->_id);
+            }
+
+            if ($e->getMessage() === 'APPLICATION_NOT_FOUND') {
+                return ['status' => 'application_not_found'];
+            }
+
+            throw $e;
+        } catch (QueryException $e) {
+            if ($swipeDoc && $swipeDoc->_id) {
+                $this->swipeHistory->deleteById($swipeDoc->_id);
+            }
+
+            $sqlState = $e->errorInfo[0] ?? $e->getCode();
+            if (in_array((string) $sqlState, ['23000', '23505'], true)) {
+                return ['status' => 'already_swiped'];
+            }
+
+            throw $e;
+        } catch (\Throwable $e) {
+            if ($swipeDoc && $swipeDoc->_id) {
+                $this->swipeHistory->deleteById($swipeDoc->_id);
+            }
+
+            throw $e;
+        }
 
         // 3. Update Redis cache
         $this->cache->markApplicantSeenByHr($hrUserId, $jobId, $applicantId);
 
-        // Dispatch match notification job
-        SendMatchNotification::dispatch($applicantId, $jobId)->onQueue('notifications');
-
-        return ['status' => 'invited'];
+        return ['status' => 'matched'];
     }
 
     // ── HR swipes left on an applicant ─────────────────────────────────────
@@ -178,15 +251,34 @@ class SwipeService
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
-    private function hasSwipesRemaining(ApplicantProfile $applicant): bool
+    private function consumeApplicantSwipeAtomically(string $applicantId): bool
     {
-        // Check if within daily limit or has extra swipes
+        // Lock row so limit checks and decrements are authoritative under concurrency.
+        $applicant = ApplicantProfile::query()->lockForUpdate()->find($applicantId);
+        if (! $applicant) {
+            return false;
+        }
+
+        $today = now()->toDateString();
+        $lastResetDate = $applicant->swipe_reset_at?->toDateString();
+
+        if ($lastResetDate !== $today) {
+            $applicant->update([
+                'daily_swipes_used' => 0,
+                'swipe_reset_at' => $today,
+            ]);
+            $applicant->refresh();
+        }
+
         if ($applicant->daily_swipes_used < $applicant->daily_swipe_limit) {
+            $applicant->increment('daily_swipes_used');
+
             return true;
         }
 
-        // Check extra swipes balance
         if ($applicant->extra_swipe_balance > 0) {
+            $applicant->decrement('extra_swipe_balance');
+
             return true;
         }
 

@@ -7,6 +7,7 @@ use App\Models\PostgreSQL\CompanyProfile;
 use App\Models\PostgreSQL\User;
 use App\Repositories\PostgreSQL\CompanyProfileRepository;
 use App\Services\SubscriptionService;
+use App\Services\TrustScoreService;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
@@ -18,7 +19,10 @@ class SubscriptionServiceUnitTest extends TestCase
         $repo = $this->createMock(CompanyProfileRepository::class);
         $repo->expects($this->never())->method('findByUserId');
 
-        $service = new SubscriptionService($repo);
+        /** @var TrustScoreService&MockObject $trustScore */
+        $trustScore = $this->createMock(TrustScoreService::class);
+
+        $service = new SubscriptionService($repo, $trustScore);
 
         $user = new User;
         $user->role = 'applicant';
@@ -38,13 +42,20 @@ class SubscriptionServiceUnitTest extends TestCase
         $companyProfile = new CompanyProfile;
         $companyProfile->subscription_tier = 'basic';
         $companyProfile->subscription_status = 'active';
+        $companyProfile->status = 'active';
+        $companyProfile->verification_status = 'approved';
+        $companyProfile->listing_cap = 10;
+        $companyProfile->active_listings_count = 0;
 
         $repo->expects($this->once())
             ->method('findByUserId')
             ->with('user-1')
             ->willReturn($companyProfile);
 
-        $service = new SubscriptionService($repo);
+        /** @var TrustScoreService&MockObject $trustScore */
+        $trustScore = $this->createMock(TrustScoreService::class);
+
+        $service = new SubscriptionService($repo, $trustScore);
 
         $user = new User;
         $user->id = 'user-1';
@@ -63,13 +74,16 @@ class SubscriptionServiceUnitTest extends TestCase
         $repo = $this->createMock(CompanyProfileRepository::class);
 
         $companyProfile = new CompanyProfile;
-        $companyProfile->subscription_status = 'inactive';
+        $companyProfile->status = 'inactive';
 
         $repo->expects($this->once())
             ->method('findByUserId')
             ->willReturn($companyProfile);
 
-        $service = new SubscriptionService($repo);
+        /** @var TrustScoreService&MockObject $trustScore */
+        $trustScore = $this->createMock(TrustScoreService::class);
+
+        $service = new SubscriptionService($repo, $trustScore);
 
         $user = new User;
         $user->id = 'user-1';

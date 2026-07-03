@@ -14,7 +14,7 @@ class ProfileOnboardingService
 {
     public const APPLICANT_ONBOARDING_STEPS = 6;
 
-    public const COMPANY_ONBOARDING_STEPS = 4;
+    public const COMPANY_ONBOARDING_STEPS = 3;
 
     public const MAX_OFFICE_IMAGES = 6;
 
@@ -139,11 +139,11 @@ class ProfileOnboardingService
             'location' => null,
             'location_city' => null,
             'location_region' => null,
-            'skills' => [],
+            'skills' => ['hard_skills' => [], 'soft_skills' => []],
+            'job_preferences' => null,
             'work_experience' => [],
             'education' => [],
             'social_links' => [],
-            'completed_profile_fields' => [],
             'notification_preferences' => [],
             'onboarding_step' => 1,
             'onboarding_completed_at' => null,
@@ -160,6 +160,41 @@ class ProfileOnboardingService
         }
 
         if ($profile) {
+            $repair = [];
+
+            if (! $this->filled($profile->user_id ?? null)) {
+                $repair['user_id'] = $userId;
+            }
+
+            if (! $this->filled($profile->company_id ?? null)) {
+                $repair['company_id'] = $companyProfile->id;
+            }
+
+            foreach ([
+                'office_images',
+                'social_links',
+                'address',
+                'benefits',
+                'culture_tags',
+                'notification_preferences',
+                'verification_documents',
+            ] as $field) {
+                $value = $profile->{$field} ?? null;
+
+                if (! is_string($value)) {
+                    continue;
+                }
+
+                $decoded = json_decode($value, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $repair[$field] = $decoded;
+                }
+            }
+
+            if ($repair !== []) {
+                return $this->companyDocs->update($profile, $repair);
+            }
+
             return $profile;
         }
 
@@ -231,9 +266,8 @@ class ProfileOnboardingService
     {
         match ($step) {
             1 => $this->completeCompanyStepDetails($userId, $data),
-            2 => $this->completeCompanyStepPayment($userId),
+            2 => $this->completeCompanyStepVerification($userId, $data),
             3 => $this->completeCompanyStepMedia($userId, $data),
-            4 => $this->completeCompanyStepVerification($userId, $data),
             default => throw new InvalidArgumentException('INVALID_ONBOARDING_STEP'),
         };
     }
@@ -269,12 +303,36 @@ class ProfileOnboardingService
 
     private function completeApplicantStepSkills(string $userId, array $data): void
     {
-        if (! isset($data['skills']) || ! is_array($data['skills']) || count($data['skills']) < 1) {
+        // Accept both nested structure and flat array for backward compatibility
+        if (isset($data['skills']['hard_skills']) || isset($data['skills']['soft_skills'])) {
+            // New nested structure
+            $skillsData = [
+                'hard_skills' => $data['skills']['hard_skills'] ?? [],
+                'soft_skills' => $data['skills']['soft_skills'] ?? [],
+            ];
+        } elseif (isset($data['hard_skills']) || isset($data['soft_skills'])) {
+            // Direct hard_skills/soft_skills in data
+            $skillsData = [
+                'hard_skills' => $data['hard_skills'] ?? [],
+                'soft_skills' => $data['soft_skills'] ?? [],
+            ];
+        } elseif (isset($data['skills']) && is_array($data['skills'])) {
+            // Legacy flat array - treat all as hard skills
+            $skillsData = [
+                'hard_skills' => array_values($data['skills']),
+                'soft_skills' => [],
+            ];
+        } else {
+            throw new InvalidArgumentException('STEP_DATA_INVALID');
+        }
+
+        // Validate at least one skill
+        if (empty($skillsData['hard_skills']) && empty($skillsData['soft_skills'])) {
             throw new InvalidArgumentException('STEP_DATA_INVALID');
         }
 
         $profile = $this->ensureApplicantDocument($userId);
-        $this->applicantDocs->update($profile, ['skills' => array_values($data['skills'])]);
+        $this->applicantDocs->update($profile, ['skills' => $skillsData]);
     }
 
     private function completeApplicantStepExperienceEducation(string $userId, array $data): void
@@ -341,15 +399,6 @@ class ProfileOnboardingService
         ]);
     }
 
-    private function completeCompanyStepPayment(string $userId): void
-    {
-        $companyProfile = $this->findCompanyProfileByUserId($userId);
-
-        if ($companyProfile->subscription_status !== 'active') {
-            throw new InvalidArgumentException('SUBSCRIPTION_REQUIRED');
-        }
-    }
-
     private function completeCompanyStepMedia(string $userId, array $data): void
     {
         if (! $this->filled($data['logo_url'] ?? null)) {
@@ -373,8 +422,9 @@ class ProfileOnboardingService
 
     private function completeCompanyStepVerification(string $userId, array $data): void
     {
-        if (! isset($data['verification_documents']) || ! is_array($data['verification_documents'])) {
-            return;
+        // Verification documents are now required during onboarding
+        if (! isset($data['verification_documents']) || ! is_array($data['verification_documents']) || count($data['verification_documents']) < 1) {
+            throw new InvalidArgumentException('STEP_DATA_INVALID');
         }
 
         $companyProfile = $this->findCompanyProfileByUserId($userId);
@@ -402,9 +452,8 @@ class ProfileOnboardingService
     {
         return [
             ['step' => 1, 'key' => 'company_details', 'required' => true],
-            ['step' => 2, 'key' => 'payment', 'required' => true],
+            ['step' => 2, 'key' => 'verification_documents', 'required' => true],
             ['step' => 3, 'key' => 'media', 'required' => true],
-            ['step' => 4, 'key' => 'verification_documents', 'required' => false],
         ];
     }
 

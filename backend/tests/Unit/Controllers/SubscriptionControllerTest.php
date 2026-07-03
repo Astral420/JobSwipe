@@ -4,10 +4,12 @@ namespace Tests\Unit\Controllers;
 
 use App\Exceptions\SubscriptionException;
 use App\Http\Controllers\Subscription\SubscriptionController;
+use App\Http\Requests\Subscription\CreateCheckoutSessionRequest;
+use App\Models\PostgreSQL\User;
 use App\Services\SubscriptionService;
 use Illuminate\Http\Request;
 use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class SubscriptionControllerTest extends TestCase
 {
@@ -25,11 +27,17 @@ class SubscriptionControllerTest extends TestCase
 
         $controller = new SubscriptionController($service);
 
-        $request = Request::create('/api/v1/subscriptions/checkout', 'POST', [
+        $request = $this->createMock(CreateCheckoutSessionRequest::class);
+        $request->expects($this->once())->method('validated')->willReturn([
             'success_url' => 'https://app.jobswipe.test/success',
             'cancel_url' => 'https://app.jobswipe.test/cancel',
         ]);
-        $request->setUserResolver(static fn () => (object) ['id' => 'user-1', 'role' => 'company_admin']);
+        $request->expects($this->once())->method('header')->with('Idempotency-Key', '')->willReturn('');
+
+        $user = new User;
+        $user->id = 'user-1';
+        $user->role = 'company_admin';
+        $request->expects($this->once())->method('user')->willReturn($user);
 
         $response = $controller->createCheckoutSession($request);
         $payload = json_decode($response->getContent(), true);
@@ -55,7 +63,11 @@ class SubscriptionControllerTest extends TestCase
         $controller = new SubscriptionController($service);
 
         $request = Request::create('/api/v1/subscriptions/status', 'GET');
-        $request->setUserResolver(static fn () => (object) ['id' => 'user-1', 'role' => 'company_admin']);
+
+        $user = new User;
+        $user->id = 'user-1';
+        $user->role = 'company_admin';
+        $request->setUserResolver(static fn () => $user);
 
         $response = $controller->getSubscriptionStatus($request);
         $payload = json_decode($response->getContent(), true);
@@ -76,7 +88,11 @@ class SubscriptionControllerTest extends TestCase
         $controller = new SubscriptionController($service);
 
         $request = Request::create('/api/v1/subscriptions/cancel', 'POST');
-        $request->setUserResolver(static fn () => (object) ['id' => 'user-1', 'role' => 'company_admin']);
+
+        $user = new User;
+        $user->id = 'user-1';
+        $user->role = 'company_admin';
+        $request->setUserResolver(static fn () => $user);
 
         $response = $controller->cancelSubscription($request);
         $payload = json_decode($response->getContent(), true);
@@ -90,6 +106,7 @@ class SubscriptionControllerTest extends TestCase
         /** @var SubscriptionService&MockObject $service */
         $service = $this->createMock(SubscriptionService::class);
 
+        config()->set('services.stripe.webhook_secret', '');
         config()->set('cashier.webhook.secret', '');
 
         $controller = new SubscriptionController($service);
@@ -149,11 +166,17 @@ class SubscriptionControllerTest extends TestCase
 
         $controller = new SubscriptionController($service);
 
-        $request = Request::create('/api/v1/subscriptions/checkout', 'POST', [
+        $request = $this->createMock(CreateCheckoutSessionRequest::class);
+        $request->expects($this->once())->method('validated')->willReturn([
             'success_url' => 'https://app.jobswipe.test/success',
             'cancel_url' => 'https://app.jobswipe.test/cancel',
         ]);
-        $request->setUserResolver(static fn () => (object) ['id' => 'user-1', 'role' => 'applicant']);
+        $request->expects($this->once())->method('header')->with('Idempotency-Key', '')->willReturn('');
+
+        $user = new User;
+        $user->id = 'user-1';
+        $user->role = 'applicant';
+        $request->expects($this->once())->method('user')->willReturn($user);
 
         $this->expectException(SubscriptionException::class);
         $this->expectExceptionMessage('Only company users can create subscriptions.');

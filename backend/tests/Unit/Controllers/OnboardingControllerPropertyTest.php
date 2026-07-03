@@ -3,12 +3,14 @@
 namespace Tests\Unit\Controllers;
 
 use App\Http\Controllers\Profile\ProfileController;
+use App\Http\Requests\Profile\CompleteOnboardingStepRequest;
+use App\Models\PostgreSQL\User;
 use App\Services\FileUploadService;
 use App\Services\ProfileService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class OnboardingControllerPropertyTest extends TestCase
 {
@@ -26,11 +28,16 @@ class OnboardingControllerPropertyTest extends TestCase
         $controller = new ProfileController($profileService, $fileService);
 
         for ($step = 7; $step <= 11; $step++) {
-            $request = Request::create('/api/v1/profile/onboarding/complete-step', 'POST', [
+            $request = $this->createMock(CompleteOnboardingStepRequest::class);
+            $request->expects($this->once())->method('validated')->willReturn([
                 'step' => $step,
                 'step_data' => [],
             ]);
-            $request->setUserResolver(static fn () => (object) ['id' => 'user-1', 'role' => 'applicant']);
+
+            $user = new User;
+            $user->id = 'user-1';
+            $user->role = 'applicant';
+            $request->expects($this->any())->method('user')->willReturn($user);
 
             $response = $controller->completeOnboardingStep($request);
             $payload = json_decode($response->getContent(), true);

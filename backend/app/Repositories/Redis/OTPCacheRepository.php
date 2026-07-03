@@ -12,8 +12,13 @@ class OTPCacheRepository
         return 'otp:'.hash('sha256', strtolower(trim($email)));
     }
 
-    public function store(string $email, string $codeHash, ?string $passwordHash = null, ?string $role = null): void
-    {
+    public function store(
+        string $email,
+        string $codeHash,
+        ?string $passwordHash = null,
+        ?string $role = null,
+        array $metadata = []
+    ): void {
         $key = $this->key($email);
 
         Redis::hset($key, 'code_hash', $codeHash);
@@ -22,6 +27,9 @@ class OTPCacheRepository
         }
         if ($role !== null) {
             Redis::hset($key, 'role', $role);
+        }
+        if ($metadata !== []) {
+            Redis::hset($key, 'metadata', json_encode($metadata));
         }
         Redis::hset($key, 'attempts', 0);
         Redis::hset($key, 'created_at', Carbon::now()->timestamp);

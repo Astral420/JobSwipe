@@ -119,6 +119,43 @@ if [ -f composer.json.hidden ]; then
     echo "Restored composer files"
 fi
 
+# Check if running as Reverb WebSocket server
+if [ "\$RUN_REVERB" = "true" ]; then
+    echo "=== Starting Laravel Reverb WebSocket Server ==="
+    
+    # Log environment for debugging
+    echo "Environment check:"
+    echo "  REVERB_HOST: \$REVERB_HOST"
+    echo "  REVERB_PORT: \$REVERB_PORT"
+    echo "  REVERB_SERVER_HOST: \$REVERB_SERVER_HOST"
+    echo "  REDIS_HOST: \$REDIS_HOST"
+    
+    # Wait for Redis
+    echo "Waiting for Redis..."
+    RETRY_COUNT=0; MAX_RETRIES=30
+    until php -r "\\\$r = new Redis(); \\\$r->connect('\$REDIS_HOST', \$REDIS_PORT); \\\$r->ping();" 2>/dev/null || [ \$RETRY_COUNT -eq \$MAX_RETRIES ]; do
+        RETRY_COUNT=\$((RETRY_COUNT + 1))
+        if [ \$RETRY_COUNT -lt \$MAX_RETRIES ]; then
+            echo "  not ready (\$RETRY_COUNT/\$MAX_RETRIES)..."
+            sleep 2
+        fi
+    done
+    
+    if [ \$RETRY_COUNT -eq \$MAX_RETRIES ]; then
+        echo "ERROR: Redis timeout"
+        exit 1
+    fi
+    
+    echo "Redis ready."
+    
+    # Clear config cache to pick up new settings
+    echo "Clearing config cache..."
+    php artisan config:clear 2>/dev/null || true
+    
+    echo "Starting Reverb..."
+    exec php artisan reverb:start --host=\${REVERB_HOST:-0.0.0.0} --port=\${REVERB_PORT:-8090}
+fi
+
 # Check if running as Horizon worker
 if [ "\$RUN_HORIZON" = "true" ]; then
     echo "=== Starting Laravel Horizon Worker ==="

@@ -24,7 +24,7 @@ return new class extends Migration
             $table->string('location_region', 100)->nullable();
             $table->decimal('lat', 9, 6)->nullable();
             $table->decimal('lng', 9, 6)->nullable();
-            $table->text('interview_template');
+            $table->text('interview_template')->nullable();
             $table->string('status', 10)->default('draft');
             $table->timestampTz('expires_at')->nullable();
             $table->timestampTz('published_at')->nullable();

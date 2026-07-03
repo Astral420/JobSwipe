@@ -14,10 +14,20 @@ class UpdateApplicantSkillsRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'skills' => ['required', 'array', 'min:1'],
-            'skills.*.name' => ['required', 'string', 'max:100'],
-            'skills.*.level' => ['nullable', 'in:beginner,intermediate,advanced,expert'],
-            'skills.*.years' => ['nullable', 'integer', 'min:0', 'max:50'],
+            'hard_skills' => ['nullable', 'array'],
+            'hard_skills.*' => ['string', 'max:100'],
+            'soft_skills' => ['nullable', 'array'],
+            'soft_skills.*' => ['string', 'max:100'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'hard_skills.*.string' => 'Each hard skill must be a text value.',
+            'hard_skills.*.max' => 'Each hard skill must not exceed 100 characters.',
+            'soft_skills.*.string' => 'Each soft skill must be a text value.',
+            'soft_skills.*.max' => 'Each soft skill must not exceed 100 characters.',
         ];
     }
 }

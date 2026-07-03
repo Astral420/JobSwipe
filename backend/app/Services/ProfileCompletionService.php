@@ -96,7 +96,8 @@ class ProfileCompletionService
             $requiredFilled++;
         }
 
-        if ($companyProfile->subscription_status === 'active') {
+        // Verification documents submitted counts toward completion
+        if (in_array($companyProfile->verification_status, ['pending', 'approved'], true)) {
             $requiredFilled++;
         }
 

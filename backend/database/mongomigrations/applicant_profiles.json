@@ -94,41 +94,88 @@
           ]
         },
         "skills": {
-          "bsonType": "array",
-          "items": {
-            "bsonType": "object",
-            "required": [
-              "name"
-            ],
-            "properties": {
-              "name": {
+          "bsonType": "object",
+          "properties": {
+            "hard_skills": {
+              "bsonType": "array",
+              "items": {
                 "bsonType": "string"
-              },
-              "type": {
-                "bsonType": [
-                  "string",
-                  "null"
-                ]
-              },
-              "level": {
-                "bsonType": [
-                  "string",
-                  "null"
-                ],
+              }
+            },
+            "soft_skills": {
+              "bsonType": "array",
+              "items": {
+                "bsonType": "string"
+              }
+            }
+          }
+        },
+        "job_preferences": {
+          "bsonType": "object",
+          "properties": {
+            "desired_position": {
+              "bsonType": [
+                "string",
+                "null"
+              ]
+            },
+            "preferred_locations": {
+              "bsonType": "array",
+              "items": {
+                "bsonType": "string"
+              }
+            },
+            "work_type": {
+              "bsonType": "array",
+              "items": {
+                "bsonType": "string",
                 "enum": [
-                  "beginner",
-                  "intermediate",
-                  "advanced",
-                  "expert",
-                  null
-                ]
-              },
-              "years": {
-                "bsonType": [
-                  "int",
-                  "null"
+                  "remote",
+                  "hybrid",
+                  "onsite"
                 ]
               }
+            },
+            "employment_type": {
+              "bsonType": "array",
+              "items": {
+                "bsonType": "string",
+                "enum": [
+                  "full-time",
+                  "part-time",
+                  "contract",
+                  "internship"
+                ]
+              }
+            },
+            "salary_expectation": {
+              "bsonType": "object",
+              "properties": {
+                "min": {
+                  "bsonType": [
+                    "int",
+                    "null"
+                  ]
+                },
+                "max": {
+                  "bsonType": [
+                    "int",
+                    "null"
+                  ]
+                },
+                "currency": {
+                  "bsonType": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "willing_to_relocate": {
+              "bsonType": [
+                "bool",
+                "null"
+              ]
             }
           }
         },
@@ -293,16 +340,22 @@
         "resume_url": "https://cdn.jobapp.local/resumes/demo-applicant.pdf",
         "cover_letter_url": null,
         "portfolio_url": "https://demo-applicant.dev",
-        "skills": [
-          {
-            "name": "Laravel",
-            "type": "hard"
+        "skills": {
+          "hard_skills": ["Laravel"],
+          "soft_skills": ["Communication"]
+        },
+        "job_preferences": {
+          "desired_position": "Backend Engineer",
+          "preferred_locations": ["Quezon City", "Makati"],
+          "work_type": ["remote", "hybrid"],
+          "employment_type": ["full-time"],
+          "salary_expectation": {
+            "min": 80000,
+            "max": 120000,
+            "currency": "PHP"
           },
-          {
-            "name": "Communication",
-            "type": "soft"
-          }
-        ],
+          "willing_to_relocate": false
+        },
         "work_experience": [
           {
             "company": "Acme Software",

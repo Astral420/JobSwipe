@@ -1,0 +1,97 @@
+{
+  "collection": "company_reviews",
+  "validator": {
+    "$jsonSchema": {
+      "bsonType": "object",
+      "required": [
+        "review_id",
+        "applicant_id",
+        "company_id",
+        "job_posting_id",
+        "rating",
+        "applicant_name",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "review_id": {
+          "bsonType": "string",
+          "description": "UUID from PostgreSQL company_reviews.id"
+        },
+        "applicant_id": {
+          "bsonType": "string",
+          "description": "UUID from PostgreSQL applicant_profiles.id"
+        },
+        "company_id": {
+          "bsonType": "string",
+          "description": "UUID from PostgreSQL company_profiles.id"
+        },
+        "job_posting_id": {
+          "bsonType": "string",
+          "description": "UUID from PostgreSQL job_postings.id"
+        },
+        "rating": {
+          "bsonType": "int",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Rating from 1 to 5 stars"
+        },
+        "review_text": {
+          "bsonType": [
+            "string",
+            "null"
+          ],
+          "description": "Optional review text, max 1000 characters"
+        },
+        "applicant_name": {
+          "bsonType": "string",
+          "description": "Anonymized applicant name (first name + last initial)"
+        },
+        "created_at": {
+          "bsonType": "date"
+        },
+        "updated_at": {
+          "bsonType": "date"
+        }
+      }
+    }
+  },
+  "validationLevel": "strict",
+  "validationAction": "error",
+  "indexes": [
+    {
+      "keys": {
+        "review_id": 1
+      },
+      "options": {
+        "unique": true,
+        "name": "idx_company_reviews_review_id"
+      }
+    },
+    {
+      "keys": {
+        "company_id": 1
+      },
+      "options": {
+        "name": "idx_company_reviews_company_id"
+      }
+    },
+    {
+      "keys": {
+        "rating": 1
+      },
+      "options": {
+        "name": "idx_company_reviews_rating"
+      }
+    },
+    {
+      "keys": {
+        "created_at": -1
+      },
+      "options": {
+        "name": "idx_company_reviews_created_at"
+      }
+    }
+  ],
+  "documents": []
+}

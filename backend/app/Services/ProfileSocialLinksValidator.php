@@ -16,6 +16,10 @@ class ProfileSocialLinksValidator
             throw new InvalidArgumentException('INVALID_URL:github');
         }
 
+        if (isset($socialLinks['twitter']) && ! preg_match('/^https:\/\/(www\.)?(twitter\.com|x\.com)\/[A-Za-z0-9_]+\/?$/i', (string) $socialLinks['twitter'])) {
+            throw new InvalidArgumentException('INVALID_URL:twitter');
+        }
+
         if (! isset($socialLinks['portfolio'])) {
             return;
         }

@@ -21,6 +21,7 @@ class CompanyProfileDocument extends Model
         'founded_year',
         'website_url',
         'logo_url',
+        'cover_photo',
         'office_images',
         'social_links',
         'address',
@@ -34,14 +35,7 @@ class CompanyProfileDocument extends Model
     ];
 
     protected $casts = [
-        'office_images' => 'array',
-        'social_links' => 'array',
-        'address' => 'array',
-        'benefits' => 'array',
-        'culture_tags' => 'array',
         'founded_year' => 'integer',
-        'notification_preferences' => 'array',
-        'verification_documents' => 'array',
         'onboarding_completed_at' => 'datetime',
         'profile_completion_percentage' => 'integer',
     ];

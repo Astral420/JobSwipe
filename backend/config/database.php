@@ -67,6 +67,9 @@ return [
                 'database' => env('MONGO_AUTH_DATABASE', 'admin'), // Auth database
                 'retryWrites' => true,
                 'w' => 'majority',
+                'connectTimeoutMS' => (int) env('MONGO_CONNECT_TIMEOUT_MS', 10000),
+                'serverSelectionTimeoutMS' => (int) env('MONGO_SERVER_SELECTION_TIMEOUT_MS', 10000),
+                'socketTimeoutMS' => (int) env('MONGO_SOCKET_TIMEOUT_MS', 10000),
             ],
         ],
     ],
@@ -83,6 +86,8 @@ return [
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', 6379),
             'database' => env('REDIS_DB', 0),
+            'timeout' => (float) env('REDIS_TIMEOUT', 5.0),
+            'read_write_timeout' => (float) env('REDIS_READ_TIMEOUT', 5.0),
         ],
         'cache' => [
             'url' => env('REDIS_URL'),
@@ -90,6 +95,8 @@ return [
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', 6379),
             'database' => env('REDIS_CACHE_DB', 1),
+            'timeout' => (float) env('REDIS_TIMEOUT', 5.0),
+            'read_write_timeout' => (float) env('REDIS_READ_TIMEOUT', 5.0),
         ],
     ],
 ];

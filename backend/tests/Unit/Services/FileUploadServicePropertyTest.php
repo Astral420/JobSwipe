@@ -4,9 +4,9 @@ namespace Tests\Unit\Services;
 
 use App\Exceptions\FileUploadException;
 use App\Services\FileUploadService;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase as LaravelTestCase;
 
-class FileUploadServicePropertyTest extends TestCase
+class FileUploadServicePropertyTest extends LaravelTestCase
 {
     protected function setUp(): void
     {

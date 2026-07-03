@@ -3,6 +3,9 @@
 namespace App\Models\PostgreSQL;
 
 use App\Services\UserDataCleanupService;
+use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Str;
@@ -11,7 +14,12 @@ use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    use Billable, HasApiTokens;
+    use Billable, HasApiTokens, HasFactory;
+
+    protected static function newFactory(): UserFactory
+    {
+        return UserFactory::new();
+    }
 
     protected $connection = 'pgsql';
 
@@ -74,6 +82,16 @@ class User extends Authenticatable
         return $this->hasOne(CompanyProfile::class, 'user_id');
     }
 
+    public function companyMemberships(): HasMany
+    {
+        return $this->hasMany(CompanyMembership::class, 'user_id');
+    }
+
+    public function hrProfile(): HasOne
+    {
+        return $this->hasOne(HRProfile::class, 'user_id');
+    }
+
     public function isApplicant(): bool
     {
         return $this->role === 'applicant';
@@ -87,5 +105,39 @@ class User extends Authenticatable
     public function hasVerifiedEmail(): bool
     {
         return $this->email_verified_at !== null;
+    }
+
+    // RBAC Role Checking Methods
+
+    public function isSuperAdmin(): bool
+    {
+        return $this->role === 'super_admin';
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    public function isModerator(): bool
+    {
+        return $this->role === 'moderator';
+    }
+
+    public function isAdminUser(): bool
+    {
+        return in_array($this->role, ['super_admin', 'admin', 'moderator'], true);
+    }
+
+    // RBAC Permission Checking Methods
+
+    public function hasPermission(string $permission): bool
+    {
+        return app(\App\Services\PermissionService::class)->hasPermission($this, $permission);
+    }
+
+    public function canPerformAction(string $action, ?\Illuminate\Database\Eloquent\Model $target = null): bool
+    {
+        return app(\App\Services\PermissionService::class)->canPerformAction($this, $action, $target);
     }
 }

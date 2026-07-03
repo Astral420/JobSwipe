@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Services\AuthService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Laravel\Socialite\Facades\Socialite;
 
 class OAuthController extends Controller
@@ -23,45 +24,50 @@ class OAuthController extends Controller
         return $this->success(data: ['redirect_url' => $url]);
     }
 
-    public function handleGoogleCallback(): JsonResponse
+    /**
+     * Handle the Google OAuth callback.
+     * Redirects to the mobile deep link (jobapp://) so the OS
+     * hands control back to the Expo app.
+     */
+    public function handleGoogleCallback(): RedirectResponse
     {
         try {
             $googleUser = Socialite::driver('google')->stateless()->user();
         } catch (\Exception $e) {
-            return $this->error(
-                code: 'OAUTH_FAILED',
-                message: 'Google authentication failed. Please try again.',
-                status: 422
+            return redirect()->away(
+                'jobapp:///(auth)/register?'.http_build_query([
+                    'error' => 'OAUTH_FAILED',
+                    'message' => 'Google authentication failed. Please try again.',
+                ], '', '&', PHP_QUERY_RFC3986)
             );
         }
 
         $result = $this->auth->handleGoogleCallback($googleUser);
 
         if ($result['status'] === 'banned') {
-            return $this->error(
-                code: 'ACCOUNT_BANNED',
-                message: 'Your account has been suspended.',
-                status: 403
+            return redirect()->away(
+                'jobapp:///(auth)/register?'.http_build_query([
+                    'error' => 'ACCOUNT_BANNED',
+                    'message' => 'Your account has been suspended.',
+                ], '', '&', PHP_QUERY_RFC3986)
             );
         }
 
         if ($result['status'] === 'role_not_allowed') {
-            return $this->error(
-                code: 'OAUTH_NOT_PERMITTED',
-                message: 'Google OAuth is only available for applicant accounts.',
-                status: 403
+            return redirect()->away(
+                'jobapp:///(auth)/register?'.http_build_query([
+                    'error' => 'OAUTH_NOT_PERMITTED',
+                    'message' => 'Google OAuth is only available for applicant accounts.',
+                ], '', '&', PHP_QUERY_RFC3986)
             );
         }
 
-        return $this->success(
-            data: [
+        return redirect()->away(
+            'jobapp:///(auth)/register?'.http_build_query([
                 'token' => $result['token'],
-                'user' => $result['user'],
-                'is_new_user' => $result['is_new_user'],
-            ],
-            message: $result['is_new_user']
-                ? 'Account created via Google. Please complete your profile.'
-                : 'Logged in with Google.',
+                'is_new_user' => $result['is_new_user'] ? '1' : '0',
+                'needs_onboarding' => $result['needs_onboarding'] ? '1' : '0',
+            ], '', '&', PHP_QUERY_RFC3986)
         );
     }
 }

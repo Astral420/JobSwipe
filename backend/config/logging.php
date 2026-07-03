@@ -138,6 +138,14 @@ return [
             'path' => storage_path('logs/laravel.log'),
         ],
 
+        'admin_audit' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/admin_audit.log'),
+            'level' => 'info',
+            'days' => 730, // Retain for 2 years as per requirements
+            'replace_placeholders' => true,
+        ],
+
     ],
 
 ];

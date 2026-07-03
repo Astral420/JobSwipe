@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="bootstrap/app.php"
+         colors="true"
+         failOnWarning="true"
+         failOnRisky="true"
+         beStrictAboutOutputDuringTests="false"
+         cacheDirectory=".phpunit.cache"
+         backupGlobals="false"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+>
+    <testsuites>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing" force="true"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file" force="true"/>
+        <env name="BCRYPT_ROUNDS" value="4" force="true"/>
+
+        <!-- PostgreSQL (real test database) -->
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_HOST" value="postgres" force="true"/>
+        <env name="DB_PORT" value="5432" force="true"/>
+        <env name="DB_DATABASE" value="jobapp_test" force="true"/>
+        <env name="DB_USERNAME" value="postgres" force="true"/>
+        <env name="DB_PASSWORD" value="password" force="true"/>
+
+        <!-- Redis (real cache/rate limiter backend) -->
+        <env name="CACHE_DRIVER" value="redis" force="true"/>
+        <env name="CACHE_PREFIX" value="jobapp_test_cache_" force="true"/>
+        <env name="REDIS_CLIENT" value="predis" force="true"/>
+        <env name="REDIS_HOST" value="redis" force="true"/>
+        <env name="REDIS_PORT" value="6379" force="true"/>
+        <env name="REDIS_PASSWORD" value="password" force="true"/>
+        <env name="REDIS_DB" value="14" force="true"/>
+        <env name="REDIS_CACHE_DB" value="15" force="true"/>
+        <env name="REDIS_PREFIX" value="jobapp_test_database_" force="true"/>
+        <env name="REDIS_TIMEOUT" value="1.5" force="true"/>
+        <env name="REDIS_READ_TIMEOUT" value="1.5" force="true"/>
+
+        <!-- MongoDB (real document backend) -->
+        <env name="MONGO_HOST" value="mongodb" force="true"/>
+        <env name="MONGO_PORT" value="27017" force="true"/>
+        <env name="MONGO_ROOT_USERNAME" value="root" force="true"/>
+        <env name="MONGO_ROOT_PASSWORD" value="password" force="true"/>
+        <env name="MONGO_AUTH_DATABASE" value="admin" force="true"/>
+        <env name="MONGO_DATABASE" value="jobapp_test" force="true"/>
+        <env name="MONGO_CONNECT_TIMEOUT_MS" value="1500" force="true"/>
+        <env name="MONGO_SERVER_SELECTION_TIMEOUT_MS" value="1500" force="true"/>
+        <env name="MONGO_SOCKET_TIMEOUT_MS" value="3000" force="true"/>
+
+        <!-- Keep side effects local to test process -->
+        <env name="MAIL_MAILER" value="array" force="true"/>
+        <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+        <env name="SESSION_DRIVER" value="array" force="true"/>
+        <env name="PULSE_ENABLED" value="false" force="true"/>
+        <env name="TELESCOPE_ENABLED" value="false" force="true"/>
+        <env name="TEST_USE_REAL_BACKENDS" value="true" force="true"/>
+        <env name="LOG_CHANNEL" value="stderr" force="true"/>
+        <env name="LOG_LEVEL" value="debug" force="true"/>
+    </php>
+</phpunit>

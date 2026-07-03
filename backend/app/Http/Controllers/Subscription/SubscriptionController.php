@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Subscription;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Subscription\CreateCheckoutSessionRequest;
 use App\Services\SubscriptionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -14,12 +15,9 @@ class SubscriptionController extends Controller
 {
     public function __construct(private SubscriptionService $subscriptions) {}
 
-    public function createCheckoutSession(Request $request): JsonResponse
+    public function createCheckoutSession(CreateCheckoutSessionRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'success_url' => ['required', 'url', 'max:2000'],
-            'cancel_url' => ['required', 'url', 'max:2000'],
-        ]);
+        $validated = $request->validated();
         $idempotencyKey = trim((string) $request->header('Idempotency-Key', ''));
 
         if ($idempotencyKey !== '' && strlen($idempotencyKey) > 255) {

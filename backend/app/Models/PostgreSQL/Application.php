@@ -2,11 +2,21 @@
 
 namespace App\Models\PostgreSQL;
 
+use Database\Factories\ApplicationFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Application extends Model
 {
+    use HasFactory;
+
+    protected static function newFactory(): ApplicationFactory
+    {
+        return ApplicationFactory::new();
+    }
+
     protected $connection = 'pgsql';
 
     protected $table = 'applications';
@@ -31,5 +41,10 @@ class Application extends Model
     public function jobPosting(): BelongsTo
     {
         return $this->belongsTo(JobPosting::class, 'job_posting_id');
+    }
+
+    public function matchRecord(): HasOne
+    {
+        return $this->hasOne(MatchRecord::class, 'application_id');
     }
 }

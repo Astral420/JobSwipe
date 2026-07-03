@@ -2,7 +2,7 @@
 
 namespace Tests\Unit;
 
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 /**
  * Preservation Property Tests
@@ -162,8 +162,9 @@ class PreservationPropertyTest extends TestCase
      */
     public function test_docker_build_continues_to_work(): void
     {
-        $basePath = dirname(__DIR__, 3); // Go up to project root
-        $dockerfilePath = $basePath.'/Dockerfile';
+        // Determine Dockerfile path - works both locally and in Docker
+        $backendPath = dirname(__DIR__, 2); // From tests/Unit to backend root
+        $dockerfilePath = dirname($backendPath).'/Dockerfile'; // Up one more to project root
 
         // Skip if Dockerfile doesn't exist
         if (file_exists($dockerfilePath) === false) {
@@ -203,9 +204,12 @@ class PreservationPropertyTest extends TestCase
      */
     public function test_security_scan_prerequisites_continue_to_work(): void
     {
-        $basePath = dirname(__DIR__, 3); // Go up to project root
-        $dockerfilePath = $basePath.'/Dockerfile';
-        $composerJsonPath = $basePath.'/backend/composer.json';
+        // Determine paths - works both locally and in Docker
+        // In Docker: /var/www/html (backend) -> /var/www/Dockerfile
+        // Locally: backend/ -> ../Dockerfile
+        $backendPath = dirname(__DIR__, 2); // From tests/Unit to backend root
+        $dockerfilePath = dirname($backendPath).'/Dockerfile'; // Up one more to project root
+        $composerJsonPath = $backendPath.'/composer.json';
 
         // Verify files needed for security scanning exist
         $this->assertFileExists(

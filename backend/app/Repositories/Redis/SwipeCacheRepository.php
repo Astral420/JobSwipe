@@ -30,7 +30,7 @@ class SwipeCacheRepository
 
         // Set TTL to midnight PHT if this is the first increment
         if ($count === 1) {
-            $secondsUntilMidnight = Carbon::now('Asia/Manila')->secondsUntilEndOfDay();
+            $secondsUntilMidnight = Carbon::now(config('app.timezone'))->secondsUntilEndOfDay();
             Redis::expire($key, $secondsUntilMidnight);
         }
 
@@ -40,7 +40,7 @@ class SwipeCacheRepository
     public function refreshCounter(string $userId, int $count): void
     {
         $key = $this->counterKey($userId);
-        $secondsUntilMidnight = Carbon::now('Asia/Manila')->secondsUntilEndOfDay();
+        $secondsUntilMidnight = Carbon::now(config('app.timezone'))->secondsUntilEndOfDay();
         Redis::set($key, $count, 'EX', $secondsUntilMidnight);
     }
 

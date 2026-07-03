@@ -167,4 +167,44 @@ class NotificationService
 
         return true; // Default to enabled
     }
+
+    /**
+     * Notify company when a review is submitted
+     */
+    public function notifyCompanyOfReview(string $companyId, string $reviewId): void
+    {
+        // Get company admin/HR users
+        $companyUsers = User::whereHas('companyProfile', function ($query) use ($companyId) {
+            $query->where('id', $companyId);
+        })->get();
+
+        foreach ($companyUsers as $user) {
+            $this->create(
+                $user->id,
+                'review_received',
+                'New Review Received',
+                'An applicant has left a review for your company.',
+                ['review_id' => $reviewId, 'company_id' => $companyId]
+            );
+        }
+    }
+
+    /**
+     * Notify moderators when a review is flagged
+     */
+    public function notifyModerators(string $type, string $reviewId, string $userId): void
+    {
+        // Get all moderators and super_admins
+        $moderators = User::whereIn('role', ['moderator', 'super_admin'])->get();
+
+        foreach ($moderators as $moderator) {
+            $this->create(
+                $moderator->id,
+                $type,
+                'Review Flagged for Moderation',
+                'A review has been flagged and requires moderation.',
+                ['review_id' => $reviewId, 'flagged_by' => $userId]
+            );
+        }
+    }
 }

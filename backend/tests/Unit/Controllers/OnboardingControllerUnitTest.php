@@ -3,12 +3,14 @@
 namespace Tests\Unit\Controllers;
 
 use App\Http\Controllers\Profile\ProfileController;
+use App\Http\Requests\Profile\CompleteOnboardingStepRequest;
+use App\Models\PostgreSQL\User;
 use App\Services\FileUploadService;
 use App\Services\ProfileService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class OnboardingControllerUnitTest extends TestCase
 {
@@ -30,11 +32,16 @@ class OnboardingControllerUnitTest extends TestCase
 
         $controller = new ProfileController($profileService, $fileService);
 
-        $request = Request::create('/api/v1/profile/onboarding/complete-step', 'POST', [
+        $request = $this->createMock(CompleteOnboardingStepRequest::class);
+        $request->expects($this->once())->method('validated')->willReturn([
             'step' => 1,
             'step_data' => ['first_name' => 'Jane'],
         ]);
-        $request->setUserResolver(static fn () => (object) ['id' => 'user-1', 'role' => 'applicant']);
+
+        $user = new User;
+        $user->id = 'user-1';
+        $user->role = 'applicant';
+        $request->expects($this->any())->method('user')->willReturn($user);
 
         $response = $controller->completeOnboardingStep($request);
         $payload = json_decode($response->getContent(), true);
@@ -62,11 +69,16 @@ class OnboardingControllerUnitTest extends TestCase
 
         $controller = new ProfileController($profileService, $fileService);
 
-        $request = Request::create('/api/v1/profile/onboarding/complete-step', 'POST', [
+        $request = $this->createMock(CompleteOnboardingStepRequest::class);
+        $request->expects($this->once())->method('validated')->willReturn([
             'step' => 4,
             'step_data' => ['verification_documents' => ['doc-1.pdf']],
         ]);
-        $request->setUserResolver(static fn () => (object) ['id' => 'company-1', 'role' => 'company_admin']);
+
+        $user = new User;
+        $user->id = 'company-1';
+        $user->role = 'company_admin';
+        $request->expects($this->any())->method('user')->willReturn($user);
 
         $response = $controller->completeOnboardingStep($request);
         $payload = json_decode($response->getContent(), true);
@@ -90,11 +102,16 @@ class OnboardingControllerUnitTest extends TestCase
 
         $controller = new ProfileController($profileService, $fileService);
 
-        $request = Request::create('/api/v1/profile/onboarding/complete-step', 'POST', [
+        $request = $this->createMock(CompleteOnboardingStepRequest::class);
+        $request->expects($this->once())->method('validated')->willReturn([
             'step' => 9,
             'step_data' => [],
         ]);
-        $request->setUserResolver(static fn () => (object) ['id' => 'user-1', 'role' => 'applicant']);
+
+        $user = new User;
+        $user->id = 'user-1';
+        $user->role = 'applicant';
+        $request->expects($this->any())->method('user')->willReturn($user);
 
         $response = $controller->completeOnboardingStep($request);
         $payload = json_decode($response->getContent(), true);

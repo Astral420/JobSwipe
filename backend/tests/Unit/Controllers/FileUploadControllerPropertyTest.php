@@ -4,11 +4,12 @@ namespace Tests\Unit\Controllers;
 
 use App\Exceptions\FileUploadException;
 use App\Http\Controllers\File\FileUploadController;
+use App\Http\Requests\File\ConfirmUploadRequest;
+use App\Http\Requests\File\GenerateReadUrlRequest;
 use App\Http\Requests\File\GenerateUploadUrlRequest;
 use App\Services\FileUploadService;
-use Illuminate\Http\Request;
 use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class FileUploadControllerPropertyTest extends TestCase
 {
@@ -94,9 +95,8 @@ class FileUploadControllerPropertyTest extends TestCase
         for ($i = 1; $i <= 3; $i++) {
             $url = "https://cdn.jobswipe.test/document/user-{$i}/resume.pdf";
 
-            $request = Request::create('/api/v1/files/confirm-upload', 'POST', [
-                'file_url' => $url,
-            ]);
+            $request = $this->createMock(ConfirmUploadRequest::class);
+            $request->expects($this->once())->method('validated')->willReturn(['file_url' => $url]);
 
             $response = $controller->confirmUpload($request);
             $payload = json_decode($response->getContent(), true);
@@ -104,6 +104,45 @@ class FileUploadControllerPropertyTest extends TestCase
             $this->assertSame(200, $response->getStatusCode());
             $this->assertTrue($payload['success']);
             $this->assertSame($url, $payload['data']['file_url']);
+        }
+    }
+
+    public function test_property_read_url_generation_returns_expected_file_key_for_multiple_inputs(): void
+    {
+        /** @var FileUploadService&MockObject $service */
+        $service = $this->createMock(FileUploadService::class);
+
+        $service->expects($this->exactly(3))
+            ->method('generatePresignedReadUrl')
+            ->willReturnCallback(static function (string $fileUrl): array {
+                $path = ltrim((string) parse_url($fileUrl, PHP_URL_PATH), '/');
+
+                return [
+                    'read_url' => 'https://signed.example.test/'.$path.'?X-Amz-Signature=abc',
+                    'file_key' => $path,
+                    'expires_in' => 900,
+                ];
+            });
+
+        $controller = new FileUploadController($service);
+
+        for ($i = 1; $i <= 3; $i++) {
+            $fileUrl = "https://cdn.jobswipe.test/document/user-{$i}/resume.pdf";
+
+            /** @var GenerateReadUrlRequest&MockObject $request */
+            $request = $this->createMock(GenerateReadUrlRequest::class);
+            $request->expects($this->once())
+                ->method('validated')
+                ->willReturn([
+                    'file_url' => $fileUrl,
+                ]);
+
+            $response = $controller->generateReadUrl($request);
+            $payload = json_decode($response->getContent(), true);
+
+            $this->assertSame(200, $response->getStatusCode());
+            $this->assertTrue($payload['success']);
+            $this->assertSame("document/user-{$i}/resume.pdf", $payload['data']['file_key']);
         }
     }
 }

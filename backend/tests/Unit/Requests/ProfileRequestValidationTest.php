@@ -2,11 +2,12 @@
 
 namespace Tests\Unit\Requests;
 
+use App\Http\Requests\File\GenerateReadUrlRequest;
 use App\Http\Requests\File\GenerateUploadUrlRequest;
 use App\Http\Requests\Profile\UpdateApplicantBasicInfoRequest;
 use App\Http\Requests\Profile\UpdateApplicantSkillsRequest;
 use App\Http\Requests\Profile\UpdateCompanyDetailsRequest;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class ProfileRequestValidationTest extends TestCase
 {
@@ -73,6 +74,24 @@ class ProfileRequestValidationTest extends TestCase
         $validator = validator($invalidData, (new GenerateUploadUrlRequest)->rules());
         $this->assertTrue($validator->fails());
         $this->assertArrayHasKey('upload_type', $validator->errors()->toArray());
+    }
+
+    public function test_generate_read_url_request_validation(): void
+    {
+        $validData = [
+            'file_url' => 'https://cdn.jobswipe.test/document/user-1/resume.pdf',
+        ];
+
+        $validator = validator($validData, (new GenerateReadUrlRequest)->rules());
+        $this->assertFalse($validator->fails(), json_encode($validator->errors()->toArray()));
+
+        $invalidData = [
+            'file_url' => 'not-a-url',
+        ];
+
+        $validator = validator($invalidData, (new GenerateReadUrlRequest)->rules());
+        $this->assertTrue($validator->fails());
+        $this->assertArrayHasKey('file_url', $validator->errors()->toArray());
     }
 
     public function test_role_authorization_for_profile_requests(): void

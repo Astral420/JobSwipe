@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\MongoDB\ApplicantProfileDocument;
+use App\Models\MongoDB\CompanyProfileDocument;
 use App\Models\PostgreSQL\JobPosting;
 use App\Repositories\MongoDB\SwipeHistoryRepository;
 use App\Repositories\Redis\SwipeCacheRepository;
@@ -13,13 +14,11 @@ use Illuminate\Support\Facades\Redis;
 
 class DeckService
 {
-    private const CANDIDATE_POOL_MULTIPLIER = 5;
-
-    private const MAX_CANDIDATE_POOL = 250;
-
     public function __construct(
         private SwipeCacheRepository $cache,
         private SwipeHistoryRepository $swipeHistory,
+        private TrustScoreService $trustScore,
+        private FileUploadService $fileUploads,
     ) {}
 
     /**
@@ -37,14 +36,10 @@ class DeckService
         $applicantSkills = $applicantProfile?->skills ?? [];
         $applicantCity = $applicantProfile?->location_city;
 
-        $candidateLimit = min(
-            max($perPage * self::CANDIDATE_POOL_MULTIPLIER, $perPage),
-            self::MAX_CANDIDATE_POOL
-        );
-
         $baseUnseenQuery = $this->unseenJobsQuery($userId);
 
-        // 3. Query a bounded candidate pool using cursor-based pagination
+        // 3. Query exactly one page worth of unseen jobs using cursor pagination.
+        // This avoids skipping jobs when relevance sorting is applied in-memory.
         $query = (clone $baseUnseenQuery)
             ->orderByDesc('published_at')
             ->orderByDesc('id')
@@ -56,33 +51,66 @@ class DeckService
         }
 
         $candidatePool = $query
-            ->limit($candidateLimit + 1)
+            ->limit($perPage + 1)
             ->get();
 
-        $hasMore = $candidatePool->count() > $candidateLimit;
-        $jobs = $candidatePool->take($candidateLimit)->values();
+        $hasMore = $candidatePool->count() > $perPage;
+        $jobs = $candidatePool->take($perPage)->values();
 
-        // 4. Calculate relevance score for each job
-        $scoredJobs = $jobs->map(function ($job) use ($applicantSkills, $applicantCity) {
+        // 4. Hydrate company data from MongoDB (logo_url, office_images)
+        $companyIds = $jobs->pluck('company_id')->unique()->values()->toArray();
+        $companyDocs = CompanyProfileDocument::whereIn('company_id', $companyIds)
+            ->get()
+            ->keyBy('company_id');
+
+        // 5. Calculate relevance score for each job
+        $scoredJobs = $jobs->map(function ($job) use ($applicantSkills, $applicantCity, $companyDocs) {
             $skillScore = $this->calculateSkillMatch($job, $applicantSkills);
             $recencyScore = $this->calculateRecencyScore($job);
             $locationBonus = $this->calculateLocationBonus($job, $applicantCity);
             $remoteBonus = $job->work_type === 'remote' ? 0.05 : 0;
 
-            $job->relevance_score = ($skillScore * 0.7) + ($recencyScore * 0.3) + $locationBonus + $remoteBonus;
+            // Apply trust-based visibility multiplier
+            $visibilityMultiplier = $this->trustScore->getVisibilityMultiplier($job->company_id);
+            $baseScore = ($skillScore * 0.7) + ($recencyScore * 0.3) + $locationBonus + $remoteBonus;
+            $job->relevance_score = $baseScore * $visibilityMultiplier;
+
+            // City-level distance estimation (no geocoordinates available)
+            $job->distance_km = $this->estimateCityDistance($job, $applicantCity);
+
+            // Hydrate company with MongoDB assets (logo, office images)
+            $doc = $companyDocs->get($job->company_id);
+            if ($doc && $job->company) {
+                $job->company->logo_url = $this->toSignedUrl($doc->logo_url);
+                $job->company->office_images = array_map(
+                    fn ($url) => $this->toSignedUrl($url),
+                    $doc->office_images ?? []
+                );
+            }
 
             return $job;
         });
 
-        // 5. Sort by relevance score and paginate
-        $sortedJobs = $scoredJobs->sortByDesc('relevance_score')->take($perPage)->values();
+        // 6. Sort this page by relevance for presentation
+        $sortedJobs = $scoredJobs
+            ->sortByDesc('relevance_score')
+            ->values();
 
         $nextCursor = null;
         if ($hasMore && $jobs->isNotEmpty()) {
             $nextCursor = $this->encodeCursor($jobs->last());
         }
 
-        $totalUnseen = (clone $baseUnseenQuery)->count();
+        // Cache total unseen count for 30 seconds to avoid expensive COUNT(*) queries
+        $cacheKey = $this->totalUnseenCacheKey($userId);
+        $totalUnseen = Redis::get($cacheKey);
+
+        if ($totalUnseen === null) {
+            $totalUnseen = (clone $baseUnseenQuery)->count();
+            Redis::setex($cacheKey, 30, $totalUnseen);
+        } else {
+            $totalUnseen = (int) $totalUnseen;
+        }
 
         return [
             'jobs' => $sortedJobs,
@@ -145,6 +173,51 @@ class DeckService
         }
 
         return strtolower($job->location_city) === strtolower($applicantCity) ? 0.1 : 0.0;
+    }
+
+    /**
+     * Estimate distance based on city/region matching.
+     * Returns a rough estimate since we lack lat/lng coordinates.
+     */
+    private function estimateCityDistance(JobPosting $job, ?string $applicantCity): float
+    {
+        if ($job->work_type === 'remote') {
+            return 0.0;
+        }
+
+        if (! $applicantCity || ! $job->location_city) {
+            return -1.0; // -1 signals "unknown" to the frontend
+        }
+
+        if (strtolower($job->location_city) === strtolower($applicantCity)) {
+            return 0.0; // Same city
+        }
+
+        // Same region = nearby estimate
+        if ($job->location_region) {
+            return 25.0; // Different city but we have region info
+        }
+
+        return -1.0; // Different city, unknown distance
+    }
+
+    /**
+     * Convert a raw R2 file URL to a pre-signed read URL.
+     * Returns the original URL on failure (non-R2 URLs, missing config, etc.)
+     */
+    private function toSignedUrl(?string $url): ?string
+    {
+        if (! $url || $url === '') {
+            return null;
+        }
+
+        try {
+            $result = $this->fileUploads->generatePresignedReadUrl($url);
+
+            return $result['read_url'] ?? $url;
+        } catch (\Throwable) {
+            return $url;
+        }
     }
 
     /**
@@ -221,6 +294,20 @@ class DeckService
     private function seenJobsSyncKey(string $userId): string
     {
         return "swipe:deck:seen:pgsync:{$userId}";
+    }
+
+    private function totalUnseenCacheKey(string $userId): string
+    {
+        return "deck:total_unseen:{$userId}";
+    }
+
+    /**
+     * Invalidate the total unseen count cache for a user
+     * Called when a user swipes on a job to ensure fresh count
+     */
+    public function invalidateTotalUnseenCache(string $userId): void
+    {
+        Redis::del($this->totalUnseenCacheKey($userId));
     }
 
     private function applyCursor(Builder $query, Carbon $publishedAt, string $jobId): void

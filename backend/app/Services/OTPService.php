@@ -13,12 +13,17 @@ class OTPService
 
     public function __construct(private OTPCacheRepository $otpCache) {}
 
-    public function sendOtp(string $email, ?string $passwordHash = null, ?string $role = null): bool
-    {
+    public function sendOtp(
+        string $email,
+        ?string $passwordHash = null,
+        ?string $role = null,
+        ?string $companyInviteToken = null
+    ): bool {
         Log::info('OTPService: Starting sendOtp', [
             'email' => $email,
             'has_password_hash' => ! is_null($passwordHash),
             'role' => $role,
+            'has_invite_token' => ! is_null($companyInviteToken),
             'queue_connection' => config('queue.default'),
             'mail_mailer' => config('mail.default'),
         ]);
@@ -29,12 +34,19 @@ class OTPService
 
         $resolvedPasswordHash = $passwordHash ?? ($stored['password_hash'] ?? null);
         $resolvedRole = $role ?? ($stored['role'] ?? null);
+        $storedMetadata = $this->decodeMetadata($stored['metadata'] ?? null);
+
+        // Merge metadata with company_invite_token if provided
+        $metadata = $storedMetadata;
+        if ($companyInviteToken !== null) {
+            $metadata['company_invite_token'] = $companyInviteToken;
+        }
 
         if ($resolvedPasswordHash === null || $resolvedRole === null) {
             return false;
         }
 
-        $this->otpCache->store($email, $codeHash, $resolvedPasswordHash, $resolvedRole);
+        $this->otpCache->store($email, $codeHash, $resolvedPasswordHash, $resolvedRole, $metadata);
 
         Mail::to($email)->queue(new EmailVerificationMail($code));
 
@@ -90,5 +102,16 @@ class OTPService
     private function hashCode(string $code): string
     {
         return hash('sha256', $code);
+    }
+
+    private function decodeMetadata(mixed $metadata): array
+    {
+        if (! is_string($metadata) || $metadata === '') {
+            return [];
+        }
+
+        $decoded = json_decode($metadata, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 }

@@ -17,11 +17,10 @@ class CompanyReview extends Model
 
     protected $fillable = [
         'applicant_id', 'company_id', 'job_posting_id',
-        'rating', 'review_text', 'is_flagged', 'is_visible',
+        'is_flagged', 'is_visible', 'mongo_review_id',
     ];
 
     protected $casts = [
-        'rating' => 'integer',
         'is_flagged' => 'boolean',
         'is_visible' => 'boolean',
     ];
@@ -44,5 +43,15 @@ class CompanyReview extends Model
     public function scopeVisible($query)
     {
         return $query->where('is_visible', true);
+    }
+
+    public function isFlagged(): bool
+    {
+        return $this->is_flagged;
+    }
+
+    public function isVisible(): bool
+    {
+        return $this->is_visible;
     }
 }

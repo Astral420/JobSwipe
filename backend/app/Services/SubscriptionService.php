@@ -7,8 +7,8 @@ use App\Models\PostgreSQL\Subscription;
 use App\Models\PostgreSQL\User;
 use App\Repositories\PostgreSQL\CompanyProfileRepository;
 use Carbon\Carbon;
-use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Stripe\StripeClient;
 use Throwable;
@@ -21,9 +21,14 @@ class SubscriptionService
 
     private const CHECKOUT_IDEMPOTENCY_PENDING_TIMEOUT_SECONDS = 30;
 
+    protected TrustScoreService $trustScoreService;
+
     public function __construct(
         private CompanyProfileRepository $companyProfiles,
-    ) {}
+        TrustScoreService $trustScoreService
+    ) {
+        $this->trustScoreService = $trustScoreService;
+    }
 
     public function createCheckoutSession(
         User $user,
@@ -149,6 +154,8 @@ class SubscriptionService
             'subscription_status' => 'active',
         ]);
 
+        $this->trustScoreService->recalculate($companyProfile->id);
+
         $subscription = Subscription::query()
             ->where('user_id', $user->id)
             ->where('payment_provider', 'stripe')
@@ -187,19 +194,48 @@ class SubscriptionService
             throw new SubscriptionException('COMPANY_PROFILE_NOT_FOUND', 'Company profile not found.', 404);
         }
 
-        $this->companyProfiles->update($companyProfile, [
-            'subscription_status' => 'cancelled',
-        ]);
-
-        Subscription::query()
+        $subscription = Subscription::query()
             ->where('user_id', $user->id)
             ->where('payment_provider', 'stripe')
             ->latest('created_at')
-            ->limit(1)
-            ->update([
-                'status' => 'cancelled',
-                'stripe_status' => 'canceled',
+            ->first();
+
+        if ($subscription && is_string($subscription->provider_sub_id) && $subscription->provider_sub_id !== '') {
+            try {
+                $stripe = $this->stripeClient();
+                $remoteSubscription = $stripe->subscriptions->retrieve($subscription->provider_sub_id, []);
+                $remoteStatus = (string) ($remoteSubscription->status ?? '');
+
+                if (! in_array($remoteStatus, ['canceled', 'incomplete_expired'], true)) {
+                    $stripe->subscriptions->cancel($subscription->provider_sub_id, []);
+                }
+            } catch (Throwable $exception) {
+                throw new SubscriptionException(
+                    'STRIPE_CANCELLATION_FAILED',
+                    'Failed to cancel subscription with Stripe: '.$exception->getMessage(),
+                    502
+                );
+            }
+        }
+
+        DB::transaction(function () use ($companyProfile, $user): void {
+            $this->companyProfiles->update($companyProfile, [
+                'subscription_tier' => 'free',
+                'subscription_status' => 'cancelled',
             ]);
+
+            Subscription::query()
+                ->where('user_id', $user->id)
+                ->where('payment_provider', 'stripe')
+                ->latest('created_at')
+                ->limit(1)
+                ->update([
+                    'status' => 'cancelled',
+                    'stripe_status' => 'canceled',
+                ]);
+        });
+
+        $this->trustScoreService->recalculate($companyProfile->id);
     }
 
     public function handleSubscriptionUpdated(array $event): void
@@ -212,75 +248,95 @@ class SubscriptionService
             return;
         }
 
-        if (! $this->reserveWebhookEvent($eventId, $eventType)) {
+        $eventRecordId = $this->reserveWebhookEvent($eventId, $eventType, $event);
+
+        if ($eventRecordId === null) {
             return;
         }
 
-        if ($eventType === 'checkout.session.completed') {
-            $metadata = $object['metadata'] ?? [];
-            $userId = is_array($metadata) ? ($metadata['user_id'] ?? null) : null;
-            $providerSubscriptionId = $object['subscription'] ?? null;
+        try {
+            if ($eventType === 'checkout.session.completed') {
+                $metadata = $object['metadata'] ?? [];
+                $userId = is_array($metadata) ? ($metadata['user_id'] ?? null) : null;
+                $providerSubscriptionId = $object['subscription'] ?? null;
 
-            if (is_string($userId) && $userId !== '') {
-                $user = User::find($userId);
-                if ($user) {
-                    $this->activateSubscription(
-                        $user,
-                        is_string($providerSubscriptionId) ? $providerSubscriptionId : null,
-                        'active'
-                    );
+                if (is_string($userId) && $userId !== '') {
+                    $user = User::find($userId);
+                    if ($user) {
+                        $this->activateSubscription(
+                            $user,
+                            is_string($providerSubscriptionId) ? $providerSubscriptionId : null,
+                            'active'
+                        );
+                    }
                 }
+
+                $this->markWebhookEventCompleted($eventRecordId);
+
+                return;
             }
 
-            return;
-        }
+            if (! in_array($eventType, ['customer.subscription.updated', 'customer.subscription.deleted'], true)) {
+                $this->markWebhookEventCompleted($eventRecordId);
 
-        if (! in_array($eventType, ['customer.subscription.updated', 'customer.subscription.deleted'], true)) {
-            return;
-        }
+                return;
+            }
 
-        $providerSubscriptionId = $object['id'] ?? null;
+            $providerSubscriptionId = $object['id'] ?? null;
 
-        if (! is_string($providerSubscriptionId) || $providerSubscriptionId === '') {
-            return;
-        }
+            if (! is_string($providerSubscriptionId) || $providerSubscriptionId === '') {
+                $this->markWebhookEventCompleted($eventRecordId);
 
-        $status = $this->mapStripeStatus((string) ($object['status'] ?? 'inactive'));
-        $stripeStatus = (string) ($object['status'] ?? 'inactive');
+                return;
+            }
 
-        $subscription = Subscription::query()
-            ->where('provider_sub_id', $providerSubscriptionId)
-            ->latest('created_at')
-            ->first();
+            $status = $this->mapStripeStatus((string) ($object['status'] ?? 'inactive'));
+            $stripeStatus = (string) ($object['status'] ?? 'inactive');
 
-        if (! $subscription) {
-            return;
-        }
+            $subscription = Subscription::query()
+                ->where('provider_sub_id', $providerSubscriptionId)
+                ->latest('created_at')
+                ->first();
 
-        $currentPeriodEnd = null;
-        if (isset($object['current_period_end']) && is_int($object['current_period_end'])) {
-            $currentPeriodEnd = Carbon::createFromTimestampUTC($object['current_period_end']);
-        }
+            if (! $subscription) {
+                $this->markWebhookEventCompleted($eventRecordId);
 
-        $subscription->update(array_filter([
-            'status' => $status,
-            'stripe_status' => $stripeStatus,
-            'current_period_end' => $currentPeriodEnd,
-        ], static fn ($value) => $value !== null));
+                return;
+            }
 
-        $companyProfile = $this->companyProfiles->findByUserId((string) $subscription->user_id);
+            $currentPeriodEnd = null;
+            if (isset($object['current_period_end']) && is_int($object['current_period_end'])) {
+                $currentPeriodEnd = Carbon::createFromTimestampUTC($object['current_period_end']);
+            }
 
-        if ($companyProfile) {
-            $companySubscriptionStatus = match ($status) {
-                'active' => 'active',
-                'cancelled' => 'cancelled',
-                default => 'inactive',
-            };
+            $subscription->update(array_filter([
+                'status' => $status,
+                'stripe_status' => $stripeStatus,
+                'current_period_end' => $currentPeriodEnd,
+            ], static fn ($value) => $value !== null));
 
-            $this->companyProfiles->update($companyProfile, [
-                'subscription_status' => $companySubscriptionStatus,
-                'subscription_tier' => $companySubscriptionStatus === 'active' ? 'basic' : $companyProfile->subscription_tier,
-            ]);
+            $companyProfile = $this->companyProfiles->findByUserId((string) $subscription->user_id);
+
+            if ($companyProfile) {
+                $companySubscriptionStatus = match ($status) {
+                    'active' => 'active',
+                    'cancelled' => 'cancelled',
+                    default => 'inactive',
+                };
+
+                $this->companyProfiles->update($companyProfile, [
+                    'subscription_status' => $companySubscriptionStatus,
+                    'subscription_tier' => $companySubscriptionStatus === 'active' ? 'basic' : 'free',
+                ]);
+
+                $this->trustScoreService->recalculate($companyProfile->id);
+            }
+
+            $this->markWebhookEventCompleted($eventRecordId);
+        } catch (Throwable $exception) {
+            $this->markWebhookEventFailed($eventRecordId, $exception->getMessage());
+
+            throw $exception;
         }
     }
 
@@ -288,7 +344,7 @@ class SubscriptionService
     {
         $companyProfile = $this->companyProfiles->findByUserId($user->id);
 
-        return $companyProfile?->subscription_status === 'active';
+        return $companyProfile !== null && $companyProfile->canPostJobs();
     }
 
     public function getSubscriptionStatus(User $user): array
@@ -302,7 +358,10 @@ class SubscriptionService
         return [
             'tier' => $companyProfile->subscription_tier,
             'status' => $companyProfile->subscription_status,
-            'can_post_jobs' => $companyProfile->subscription_status === 'active',
+            'can_post_jobs' => $companyProfile->canPostJobs(),
+            'verification_status' => $companyProfile->verification_status,
+            'listing_cap' => $companyProfile->listing_cap,
+            'active_listings_count' => $companyProfile->active_listings_count,
         ];
     }
 
@@ -477,25 +536,94 @@ class SubscriptionService
         return max((int) config('services.stripe.checkout_idempotency_ttl_seconds', self::CHECKOUT_IDEMPOTENCY_TTL_SECONDS), 300);
     }
 
-    private function reserveWebhookEvent(string $eventId, string $eventType): bool
+    private function reserveWebhookEvent(string $eventId, string $eventType, array $payload): ?int
     {
-        try {
-            DB::table('stripe_webhook_events')->insert([
+        $staleProcessingCutoff = now()->subMinutes(
+            max((int) config('services.stripe.webhook_processing_timeout_minutes', 5), 1)
+        );
+
+        return DB::transaction(function () use ($eventId, $eventType, $payload, $staleProcessingCutoff): ?int {
+            DB::table('stripe_webhook_events')->insertOrIgnore([
                 'stripe_event_id' => $eventId,
                 'event_type' => $eventType,
+                'payload' => json_encode($payload),
+                'status' => 'pending',
+                'attempts' => 0,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
 
-            return true;
-        } catch (QueryException $exception) {
-            $sqlState = $exception->errorInfo[0] ?? null;
+            $record = DB::table('stripe_webhook_events')
+                ->where('stripe_event_id', $eventId)
+                ->lockForUpdate()
+                ->first();
 
-            if (in_array($sqlState, ['23000', '23505'], true)) {
-                return false;
+            if (! $record) {
+                throw new SubscriptionException(
+                    'WEBHOOK_RESERVATION_FAILED',
+                    'Unable to reserve Stripe webhook event.',
+                    500
+                );
             }
 
-            throw $exception;
-        }
+            if ((string) $record->status === 'completed') {
+                return null;
+            }
+
+            $isFreshlyProcessing = (string) $record->status === 'processing'
+                && $record->processing_started_at !== null
+                && Carbon::parse((string) $record->processing_started_at)->gt($staleProcessingCutoff);
+
+            if ($isFreshlyProcessing) {
+                return null;
+            }
+
+            DB::table('stripe_webhook_events')
+                ->where('id', $record->id)
+                ->update([
+                    'event_type' => $eventType,
+                    'payload' => json_encode($payload),
+                    'status' => 'processing',
+                    'attempts' => DB::raw('attempts + 1'),
+                    'processing_started_at' => now(),
+                    'completed_at' => null,
+                    'failed_at' => null,
+                    'last_error' => null,
+                    'updated_at' => now(),
+                ]);
+
+            return (int) $record->id;
+        }, 3);
+    }
+
+    private function markWebhookEventCompleted(int $eventRecordId): void
+    {
+        DB::table('stripe_webhook_events')
+            ->where('id', $eventRecordId)
+            ->update([
+                'status' => 'completed',
+                'completed_at' => now(),
+                'processing_started_at' => null,
+                'last_error' => null,
+                'updated_at' => now(),
+            ]);
+    }
+
+    private function markWebhookEventFailed(int $eventRecordId, string $errorMessage): void
+    {
+        DB::table('stripe_webhook_events')
+            ->where('id', $eventRecordId)
+            ->update([
+                'status' => 'failed',
+                'failed_at' => now(),
+                'processing_started_at' => null,
+                'last_error' => Str::limit($errorMessage, 1000, ''),
+                'updated_at' => now(),
+            ]);
+
+        Log::warning('Stripe webhook marked as failed', [
+            'stripe_webhook_event_id' => $eventRecordId,
+            'error' => Str::limit($errorMessage, 250),
+        ]);
     }
 }

@@ -3,10 +3,11 @@
 namespace Tests\Unit\Controllers;
 
 use App\Http\Controllers\Subscription\SubscriptionController;
+use App\Models\PostgreSQL\User;
 use App\Services\SubscriptionService;
 use Illuminate\Http\Request;
 use PHPUnit\Framework\MockObject\MockObject;
-use PHPUnit\Framework\TestCase;
+use Tests\TestCase;
 
 class SubscriptionControllerPropertyTest extends TestCase
 {
@@ -28,7 +29,11 @@ class SubscriptionControllerPropertyTest extends TestCase
 
         for ($i = 0; $i < 4; $i++) {
             $request = Request::create('/api/v1/subscriptions/status', 'GET');
-            $request->setUserResolver(static fn () => (object) ['id' => 'u1', 'role' => 'company_admin']);
+
+            $user = new User;
+            $user->id = 'u1';
+            $user->role = 'company_admin';
+            $request->setUserResolver(static fn () => $user);
 
             $response = $controller->getSubscriptionStatus($request);
             $payload = json_decode($response->getContent(), true);

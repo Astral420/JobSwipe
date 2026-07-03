@@ -35,7 +35,9 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Add seeder calls here as needed
-        // Example: $this->call(UserSeeder::class);
+        $this->call([
+            BlockedEmailDomainSeeder::class,
+            AdminUserSeeder::class,
+        ]);
     }
 }

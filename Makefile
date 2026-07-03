@@ -32,7 +32,7 @@ docker-up: ## Start Docker services (PostgreSQL, MongoDB, Redis, Laravel)
 	@echo "$(BLUE)Starting Docker services...$(NC)"
 	docker-compose up -d
 	@echo "$(GREEN)✓ Services started$(NC)"
-	@echo "PostgreSQL: localhost:5432"
+	@echo "PostgreSQL: localhost:5433"
 	@echo "MongoDB: localhost:27017"
 	@echo "Redis: localhost:6379"
 	@echo "Laravel API: localhost:8000"
@@ -112,6 +112,10 @@ format-mobile: ## Format mobile code
 test-backend: ## Run backend tests
 	@echo "$(BLUE)Running backend tests...$(NC)"
 	cd backend && php artisan test && cd ..
+
+test-backend-feature-real: ## Run backend feature tests with real PostgreSQL/MongoDB/Redis
+	@echo "$(BLUE)Running backend feature tests with real backends...$(NC)"
+	docker compose exec -T laravel sh -lc "cd /var/www/html && ./vendor/bin/phpunit -c phpunit.feature.xml"
 
 test-web: ## Run web tests
 	@echo "$(BLUE)Running web tests...$(NC)"

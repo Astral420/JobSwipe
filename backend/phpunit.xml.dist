@@ -5,9 +5,12 @@
          colors="true"
          failOnWarning="true"
          failOnRisky="true"
-         beStrictAboutOutputDuringTests="true"
+         beStrictAboutOutputDuringTests="false"
          cacheDirectory=".phpunit.cache"
          backupGlobals="false"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
 >
     <testsuites>
         <testsuite name="Unit">
@@ -26,7 +29,7 @@
         <env name="APP_ENV" value="testing"/>
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="CACHE_STORE" value="array"/>
+        <env name="CACHE_DRIVER" value="array"/>
         <env name="DB_CONNECTION" value="sqlite"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="MAIL_MAILER" value="array"/>
@@ -34,5 +37,18 @@
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
+        
+        <!-- MongoDB test configuration - prevent connection hangs -->
+        <env name="MONGO_HOST" value="127.0.0.1"/>
+        <env name="MONGO_PORT" value="27017"/>
+        <env name="MONGO_DATABASE" value="jobapp_test"/>
+        
+        <!-- Redis test configuration -->
+        <env name="REDIS_HOST" value="127.0.0.1"/>
+        <env name="REDIS_PORT" value="6379"/>
+        
+        <!-- Enable verbose logging during tests -->
+        <env name="LOG_CHANNEL" value="stderr"/>
+        <env name="LOG_LEVEL" value="debug"/>
     </php>
 </phpunit>

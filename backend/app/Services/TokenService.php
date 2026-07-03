@@ -15,7 +15,12 @@ class TokenService
 
     public function revokeCurrentToken(User $user): void
     {
-        $user->currentAccessToken()->delete();
+        // Get the current access token and delete it
+        $token = $user->currentAccessToken();
+
+        if ($token) {
+            $token->delete();
+        }
     }
 
     public function revokeAllTokens(User $user): void
